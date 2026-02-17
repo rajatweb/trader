@@ -80,6 +80,9 @@ export default function OrderModal({
     const finalExchange = exchange || instrument?.exchange || 'NSE';
     const finalSegment = segment || instrument?.segment || 'NSE_EQ';
 
+    // Use live price if available, otherwise fallback to passed price
+    const livePrice = instrument?.ltp || price;
+
     // Get instrument details including lot size
     const instrumentInfo = getInstrumentDetails(symbol, finalSegment);
     const lotSize = instrumentInfo.lotSize;
@@ -143,7 +146,7 @@ export default function OrderModal({
                         <h2 className="text-base font-semibold tracking-wide mb-1">{symbol}</h2>
                         <div className="text-xs opacity-90 flex items-center gap-1">
                             <span className="opacity-80">NFO</span>
-                            <span className="font-medium text-sm">₹{price.toFixed(2)}</span>
+                            <span className="font-medium text-sm">₹{livePrice.toFixed(2)}</span>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -316,7 +319,7 @@ export default function OrderModal({
                                         orderType: orderType as any,
                                         productType: product as any,
                                         quantity: qty,
-                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
                                         triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
                                     };
                                     const marginCheck = calculateMargin(orderData);
@@ -335,7 +338,7 @@ export default function OrderModal({
                                         productType: product,
                                         orderType: orderType,
                                         quantity: instrumentInfo.isEquity ? qty : qty * lotSize,
-                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
                                         side: (isBuy ? 'BUY' : 'SELL') as any,
                                         exchange: finalExchange
                                     });
@@ -351,7 +354,7 @@ export default function OrderModal({
                                         productType: product,
                                         orderType: orderType,
                                         quantity: instrumentInfo.isEquity ? qty : qty * lotSize,
-                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
                                         side: (isBuy ? 'BUY' : 'SELL') as any,
                                         exchange: finalExchange
                                     });
@@ -401,7 +404,7 @@ export default function OrderModal({
                                             orderType: 'MARKET' as any,
                                             productType: product as any,
                                             quantity: qty,
-                                            price: price,
+                                            price: livePrice,
                                             triggerPrice: undefined
                                         };
 
@@ -440,7 +443,7 @@ export default function OrderModal({
                                         orderType: orderType as any,
                                         productType: product as any,
                                         quantity: qty,
-                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
                                         triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
                                     };
 

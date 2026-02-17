@@ -6,11 +6,14 @@ import { useState } from 'react';
 
 export default function FundsPage() {
     const { account, addFunds, reset } = useTradingStore();
-    const [isResetting, setIsResetting] = useState(false);
+    const [customAmount, setCustomAmount] = useState('100000');
+    const [isAdding, setIsAdding] = useState(false);
 
     const handleAddFunds = () => {
-        const amount = 100000; // Add 1L by default
-        addFunds(amount);
+        const value = parseFloat(customAmount);
+        if (!value || value <= 0) return;
+        addFunds(value);
+        setIsAdding(false);
     };
 
     const handleReset = () => {
@@ -76,13 +79,38 @@ export default function FundsPage() {
                         </div>
                     </div>
 
-                    <div className="flex gap-4 pt-4">
-                        <button
-                            onClick={handleAddFunds}
-                            className="flex-1 bg-[#387ed1] hover:bg-blue-600 text-white py-2.5 rounded text-sm font-medium flex justify-center items-center gap-2 transition-colors shadow-sm"
-                        >
-                            <span className="text-lg leading-none">+</span> Add funds (₹1 Lac)
-                        </button>
+                    <div className="flex flex-col gap-4 pt-4 border-t border-gray-100">
+                        {!isAdding ? (
+                            <button
+                                onClick={() => setIsAdding(true)}
+                                className="w-full bg-[#387ed1] hover:bg-blue-600 text-white py-2.5 rounded text-sm font-medium flex justify-center items-center gap-2 transition-colors shadow-sm"
+                            >
+                                <span className="text-lg leading-none">+</span> Add Funds
+                            </button>
+                        ) : (
+                            <div className="flex gap-2 w-full animate-in fade-in zoom-in duration-200">
+                                <input
+                                    type="number"
+                                    value={customAmount}
+                                    onChange={(e) => setCustomAmount(e.target.value)}
+                                    className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-[#387ed1]"
+                                    placeholder="Enter amount"
+                                    autoFocus
+                                />
+                                <button
+                                    onClick={handleAddFunds}
+                                    className="bg-[#387ed1] hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+                                >
+                                    Add
+                                </button>
+                                <button
+                                    onClick={() => setIsAdding(false)}
+                                    className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-2 rounded text-sm font-medium transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     <div className="mt-6 text-center">
