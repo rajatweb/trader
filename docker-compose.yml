@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  web:
+    image: trader-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trader-app
+    restart: always
+    ports:
+      - "7000:7000"
+    environment:
+      - NODE_ENV=production
+      - PORT=7000
+    # Mount local environment file if available
+    env_file:
+      - .env.local
