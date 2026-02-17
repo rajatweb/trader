@@ -118,7 +118,7 @@ const LOT_SIZE_MAP: Record<string, number> = {
     'BANKNIFTY': 30,
     'FINNIFTY': 40,
     'MIDCPNIFTY': 75,
-    'SENSEX': 20,
+    'SENSEX': 10,
     'BANKEX': 15,
 
     // Commodity Options (MCX)
@@ -138,17 +138,18 @@ const LOT_SIZE_MAP: Record<string, number> = {
 // Helper function to get lot size
 export const getLotSize = (symbol: string, segment: string): number => {
     // For equity, lot size is 1
-    if (segment.includes('_EQ')) {
+    if (segment.includes('_EQ') || segment === 'NSE_EQ' || segment === 'BSE_EQ') {
         return 1;
     }
 
-    // For F&O, check the base symbol
-    const baseSymbol = symbol.split(/\d/)[0].trim().toUpperCase(); // Extract base symbol (e.g., "NIFTY" from "NIFTY 22000 CE")
+    const baseSymbol = symbol.toUpperCase(); // Ensure uppercase
 
-    // Check in lot size map
-    for (const [key, lotSize] of Object.entries(LOT_SIZE_MAP)) {
+    // Check in lot size map - sort by key length desc to avoid partial matches (e.g. NIFTY matching BANKNIFTY)
+    const sortedKeys = Object.keys(LOT_SIZE_MAP).sort((a, b) => b.length - a.length);
+
+    for (const key of sortedKeys) {
         if (baseSymbol.includes(key)) {
-            return lotSize;
+            return LOT_SIZE_MAP[key];
         }
     }
 
@@ -223,7 +224,28 @@ interface TradingStore {
     // Settlement
     lastSettlementDate: string;
     performDailySettlement: () => void;
+
+    // Charges
+    getEstimatedCharges: (params: {
+        symbol: string;
+        segment: string;
+        productType: string;
+        orderType: string;
+        quantity: number;
+        price: number;
+        side: 'BUY' | 'SELL';
+        exchange?: string;
+    }) => {
+        total: number;
+        brokerage: number;
+        stt: number;
+        exchangeTxn: number;
+        gst: number;
+        sebi: number;
+        stampDuty: number;
+    };
 }
+
 
 // ============================================
 // INITIAL STATE
@@ -244,49 +266,113 @@ const initialAccount: AccountSummary = {
 // ============================================
 
 // ============================================
-// CHARGES CALCULATOR (Estimated for Indian Markets)
+// CHARGES CALCULATOR
 // ============================================
-const calculateCharges = (trade: TradeLog): number => {
+
+// Internal helper for single leg calculation
+const calculateLegCharges = (
+    price: number,
+    quantity: number,
+    productType: string,
+    segment: string,
+    side: 'BUY' | 'SELL',
+    exchange: string = 'NSE',
+    instrumentType: { isEquity: boolean; isFutures: boolean; isOptions: boolean }
+) => {
     let brokerage = 0;
     let stt = 0;
     let exchangeTxn = 0;
-    let gst = 0;
-    let sebi = 0;
     let stampDuty = 0;
 
-    const turnover = (trade.buyPrice + trade.sellPrice) * trade.quantity * trade.lotSize;
+    const turnover = price * quantity;
+    const { isEquity, isFutures, isOptions } = instrumentType;
 
-    // Brokerage (assuming flat ₹20 or 0.03% whichever is lower for Intraday/F&O)
-    // Equity Delivery is usually 0 but we'll stick to a simple model for now
-    if (trade.productType === 'MIS' || trade.exchange === 'MCX') {
-        brokerage = Math.min(turnover * 0.0003, 20);
+    // 1. BROKERAGE (Flat ₹20 per executed order, free for Equity Delivery)
+    if (productType === 'CNC' && isEquity) {
+        brokerage = 0;
     } else {
-        brokerage = 0; // Equity Delivery Free
+        brokerage = 20;
     }
 
-    // STT/CTT
-    if (trade.productType === 'CNC') {
-        stt = turnover * 0.001; // 0.1% on Delivery
-    } else if (trade.productType === 'MIS') {
-        stt = (trade.sellPrice * trade.quantity * trade.lotSize) * 0.00025; // 0.025% on Sell only
-    } else {
-        // Options/Futures logic simplified
-        stt = (trade.sellPrice * trade.quantity * trade.lotSize) * 0.00125; // Options Sell
+    // 2. STT (Securities Transaction Tax)
+    if (isEquity) {
+        if (productType === 'CNC') {
+            // Delivery: 0.1% on Buy & Sell
+            stt = turnover * 0.001;
+        } else {
+            // Intraday: 0.025% on Sell only
+            if (side === 'SELL') stt = turnover * 0.00025;
+        }
+    } else if (isFutures) {
+        // Futures: 0.02% on Sell (Updated 2025)
+        if (side === 'SELL') stt = turnover * 0.0002;
+    } else if (isOptions) {
+        // Options: 0.1% on Sell of Premium (Updated 2025)
+        if (side === 'SELL') stt = turnover * 0.001;
     }
 
-    // Exchange Txn Charges (approx 0.00325% for NSE Equity)
-    exchangeTxn = turnover * 0.0000325;
+    // 3. EXCHANGE TRANSACTION CHARGES
+    if (isEquity) {
+        exchangeTxn = turnover * 0.0000325; // NSE Equity
+    } else if (isFutures) {
+        exchangeTxn = turnover * 0.00002; // NSE Futures
+    } else if (isOptions) {
+        exchangeTxn = turnover * 0.00053; // NSE Options (on Premium)
+    } else if (exchange === 'MCX') {
+        exchangeTxn = turnover * 0.000026; // MCX approx
+    }
 
-    // GST (18% on Brokerage + Txn Charges)
-    gst = (brokerage + exchangeTxn) * 0.18;
+    // 4. SEBI CHARGES (₹10 per crore = 0.0001%)
+    const sebi = turnover * 0.000001;
 
-    // SEBI Charges (₹10 per crore)
-    sebi = turnover * 0.000001;
+    // 5. STAMP DUTY (Buy only)
+    if (side === 'BUY') {
+        if (isEquity && productType === 'CNC') {
+            stampDuty = turnover * 0.00015; // Delivery 0.015%
+        } else if (isEquity) {
+            stampDuty = turnover * 0.00003; // Intraday 0.003%
+        } else if (isOptions) {
+            stampDuty = turnover * 0.00003; // Options 0.003%
+        } else if (isFutures) {
+            stampDuty = turnover * 0.00002; // Futures 0.002%
+        } else {
+            stampDuty = turnover * 0.00003; // Default
+        }
+    }
 
-    // Stamp Duty (0.003% on Buy only - approx half turnover)
-    stampDuty = (trade.buyPrice * trade.quantity * trade.lotSize) * 0.00003;
+    // 6. GST (18% on Brokerage + Exchange Txn + SEBI)
+    const gst = (brokerage + exchangeTxn + sebi) * 0.18;
 
-    return brokerage + stt + exchangeTxn + gst + sebi + stampDuty;
+    const total = brokerage + stt + exchangeTxn + gst + sebi + stampDuty;
+
+    return {
+        total,
+        brokerage,
+        stt,
+        exchangeTxn,
+        gst,
+        sebi,
+        stampDuty
+    };
+};
+
+// Calculate total charges for a closed trade (Buy + Sell legs)
+const calculateCharges = (trade: TradeLog): number => {
+    // Determine instrument type
+    const isEquity = trade.segment.includes('_EQ') || trade.segment === 'NSE_EQ' || trade.segment === 'BSE_EQ';
+    const isFutures = trade.segment.includes('FUT') || trade.symbol.endsWith('FUT');
+
+    // Fallback: If not equity or futures, assume options (simplification for Dhan NSE_FNO)
+    const isOptions = !isEquity && !isFutures;
+
+    const instrumentType = { isEquity, isFutures, isOptions };
+
+    const quantityInUnits = trade.quantity * (trade.lotSize || 1);
+
+    const buyLeg = calculateLegCharges(trade.buyPrice, quantityInUnits, trade.productType, trade.segment, 'BUY', trade.exchange, instrumentType);
+    const sellLeg = calculateLegCharges(trade.sellPrice, quantityInUnits, trade.productType, trade.segment, 'SELL', trade.exchange, instrumentType);
+
+    return buyLeg.total + sellLeg.total;
 };
 
 export const useTradingStore = create<TradingStore>()(
@@ -387,7 +473,7 @@ export const useTradingStore = create<TradingStore>()(
 
                 // However, we don't want to double-charge if lastSettlementDate was yesterday.
                 // We should only charge trades that happened matching the period we missed.
-                // Simpler Logic: 
+                // Simpler Logic:
                 // We settle trades where Date(trade) > Date(lastSettlementDate) AND Date(trade) < todayStr.
 
                 const lastSettlement = new Date(state.lastSettlementDate);
@@ -724,7 +810,37 @@ export const useTradingStore = create<TradingStore>()(
                 };
             },
 
+            getEstimatedCharges: ({
+                symbol,
+                segment,
+                productType,
+                orderType,
+                quantity,
+                price,
+                side,
+                exchange
+            }) => {
+                // Get instrument details to determine correct STT rate
+                const details = get().getInstrumentDetails(symbol, segment);
+
+                const charges = calculateLegCharges(
+                    price,
+                    quantity,
+                    productType,
+                    segment,
+                    side,
+                    exchange || 'NSE',
+                    {
+                        isEquity: details.isEquity,
+                        isFutures: details.isFutures,
+                        isOptions: details.isOptions
+                    }
+                );
+                return charges;
+            },
+
             updateAccountSummary: () => {
+
                 const { positions, account } = get();
 
                 const realizedPnl = positions.reduce((sum, pos) => sum + pos.realizedPnl, 0);

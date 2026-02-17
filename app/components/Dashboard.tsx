@@ -111,56 +111,7 @@ export default function Dashboard() {
                 </div>
             </div>
 
-            {/* Empty State */}
-            <div className="flex flex-col items-center justify-center py-16 gap-6 text-center border-b border-[#eee] pb-16 mb-10">
-                <div className="w-20 h-20 border border-[#eee] rounded-full border-dashed flex items-center justify-center bg-white shadow-sm">
-                    <Briefcase size={32} className="text-[#ddd]" strokeWidth={1.2} />
-                </div>
-                <div className="max-w-md">
-                    <h3 className="text-[#444] font-medium mb-1">No holdings</h3>
-                    <p className="text-[#777] text-[13px] font-light leading-relaxed">
-                        You don't have any stocks in your DEMAT yet. Get started with absolutely free equity investments.
-                    </p>
-                </div>
-                <button className="bg-[#387ed1] hover:bg-blue-600 text-white px-6 py-2 rounded-[3px] text-xs font-semibold shadow-sm transition-all transform hover:-translate-y-0.5 tracking-wide uppercase">
-                    Start investing
-                </button>
-            </div>
 
-            {/* Bottom Metrics Section */}
-            <div className="grid grid-cols-2 gap-12 mt-4">
-
-                {/* Market Overview Graph Placeholder */}
-                <div>
-                    <div className="flex items-center gap-2 text-[#666] text-xs font-semibold uppercase tracking-wider mb-4 opacity-80">
-                        <Activity size={14} /> Market overview
-                    </div>
-                    <div className="h-40 border border-[#e0e0e0] rounded bg-white relative overflow-hidden flex items-end opacity-60 hover:opacity-100 transition-opacity cursor-pointer">
-                        <svg viewBox="0 0 100 40" className="w-full h-full" preserveAspectRatio="none">
-                            <path d="M0 30 Q 10 25, 20 32 T 40 20 T 60 25 T 80 15 T 100 10 L 100 40 L 0 40 Z" fill="#e3f2fd" />
-                            <path d="M0 30 Q 10 25, 20 32 T 40 20 T 60 25 T 80 15 T 100 10" stroke="#387ed1" strokeWidth="0.5" fill="none" />
-                        </svg>
-                    </div>
-                </div>
-
-                {/* Positions Placeholder */}
-                <div>
-                    <div className="flex items-center gap-2 text-[#666] text-xs font-semibold uppercase tracking-wider mb-4 opacity-80">
-                        <Briefcase size={14} /> Positions (1)
-                    </div>
-                    <div className="border border-[#e0e0e0] bg-white rounded p-4 hover:shadow-sm transition-shadow cursor-pointer">
-                        <div className="flex items-center gap-3 text-xs mb-3">
-                            <span className="bg-[#fff3e0] text-[#ff5722] px-1.5 py-0.5 rounded-[2px] text-[10px] font-bold border border-[#ffe0b2]">MIS</span>
-                            <span className="text-[#999] font-medium">NSE</span>
-                            <span className="flex-1 text-right text-[10px] text-[#ccc]">12:28:45</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-[#444]">BANKNIFTY FEB 60500 PE</span>
-                            <span className="text-rose-500 font-mono text-base font-medium">-1,194.00</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     );
 }

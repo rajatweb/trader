@@ -302,30 +302,85 @@ export default function OrderModal({
 
                 {/* Footer */}
                 <div className="px-6 py-4 bg-[#fbfbfb] border-t border-gray-200 flex items-center justify-between">
-                    <div className="flex gap-6 text-[13px]">
-                        <div className="text-gray-500">
-                            Required <span className={`${isBuy ? 'text-[#4184f3]' : 'text-[#ff5722]'} ml-1`}>₹{(() => {
-                                const orderData = {
-                                    securityId: finalSecurityId,
-                                    symbol,
-                                    exchange: finalExchange as any,
-                                    segment: finalSegment,
-                                    side: (isBuy ? 'BUY' : 'SELL') as any,
-                                    orderType: orderType as any,
-                                    productType: product as any,
-                                    quantity: qty,
-                                    price: orderType === 'MARKET' ? price : limitPrice,
-                                    triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
-                                };
-                                const marginCheck = calculateMargin(orderData);
-                                return marginCheck.requiredMargin.toLocaleString();
-                            })()}</span>
+                    <div className="flex gap-8 text-[13px]">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Margin Required</span>
+                            <span className={`text-base font-semibold ${isBuy ? 'text-[#4184f3]' : 'text-[#ff5722]'}`}>
+                                ₹{(() => {
+                                    const orderData = {
+                                        securityId: finalSecurityId,
+                                        symbol,
+                                        exchange: finalExchange as any,
+                                        segment: finalSegment,
+                                        side: (isBuy ? 'BUY' : 'SELL') as any,
+                                        orderType: orderType as any,
+                                        productType: product as any,
+                                        quantity: qty,
+                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
+                                    };
+                                    const marginCheck = calculateMargin(orderData);
+                                    return marginCheck.requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+                                })()}
+                            </span>
                         </div>
-                        <div className="text-gray-500 flex items-center gap-1">
-                            Available <span className={`${isBuy ? 'text-[#4184f3]' : 'text-[#ff5722]'} ml-1`}>₹{account.availableMargin.toLocaleString()}</span>
-                            <RotateCcw size={10} className="text-[#4184f3] cursor-pointer" />
+
+                        <div className="flex flex-col group relative cursor-help">
+                            <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider border-b border-dotted border-gray-400">Idx. Charges</span>
+                            <span className="text-sm font-medium text-gray-600">
+                                ₹{(() => {
+                                    const charges = useTradingStore.getState().getEstimatedCharges({
+                                        symbol,
+                                        segment: finalSegment,
+                                        productType: product,
+                                        orderType: orderType,
+                                        quantity: instrumentInfo.isEquity ? qty : qty * lotSize,
+                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        side: (isBuy ? 'BUY' : 'SELL') as any,
+                                        exchange: finalExchange
+                                    });
+                                    return charges.total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+                                })()}
+                            </span>
+                            {/* Tooltip for Charges Breakdown */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-gray-800 text-white text-xs rounded p-2 hidden group-hover:block z-50 shadow-lg">
+                                {(() => {
+                                    const charges = useTradingStore.getState().getEstimatedCharges({
+                                        symbol,
+                                        segment: finalSegment,
+                                        productType: product,
+                                        orderType: orderType,
+                                        quantity: instrumentInfo.isEquity ? qty : qty * lotSize,
+                                        price: orderType === 'MARKET' ? price : limitPrice,
+                                        side: (isBuy ? 'BUY' : 'SELL') as any,
+                                        exchange: finalExchange
+                                    });
+                                    return (
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between"><span>Brokerage:</span><span>₹{charges.brokerage.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>STT:</span><span>₹{charges.stt.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>Exch Txn:</span><span>₹{charges.exchangeTxn.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>GST:</span><span>₹{charges.gst.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>SEBI:</span><span>₹{charges.sebi.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>Stamp Duty:</span><span>₹{charges.stampDuty.toFixed(2)}</span></div>
+                                            <div className="border-t border-gray-600 pt-1 mt-1 flex justify-between font-bold">
+                                                <span>Total:</span><span>₹{charges.total.toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Available</span>
+                            <div className="flex items-center gap-1">
+                                <span className="text-sm font-medium text-gray-700">₹{account.availableMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                                <RotateCcw size={12} className="text-gray-400 cursor-pointer hover:text-gray-600" />
+                            </div>
                         </div>
                     </div>
+
                     <div className="flex gap-3">
                         {/* Exit at Market - Only show for existing SL orders */}
                         {existingOrderId && (
