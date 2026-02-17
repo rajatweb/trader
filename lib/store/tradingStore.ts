@@ -69,6 +69,7 @@ export interface TradeLog {
     id: string;
     symbol: string;
     exchange: string;
+    segment: string;
     productType: ProductType;
     quantity: number; // lots or shares
     lotSize: number;
@@ -417,6 +418,15 @@ export const useTradingStore = create<TradingStore>()(
                         const change = newLtp - prevClose;
                         const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
 
+                        // Also update position if exists
+                        const position = state.positions.find(p => p.securityId === item.securityId);
+                        if (position && position.quantity !== 0) {
+                            // This is synchronous update loop, but we should use get().updatePosition() ideally
+                            // However, since we are inside set(), we can't call get().updatePosition() which calls set().
+                            // So we rely on a separate loop or integrated logic.
+                            // For now, let's assume updateWatchlistPrices is INTENDED to update positions too, if not, where is it?
+                        }
+
                         return {
                             ...item,
                             ...update,
@@ -426,19 +436,42 @@ export const useTradingStore = create<TradingStore>()(
                             prevClose
                         };
                     });
-                    return { watchlist: updatedWatchlist };
+
+                    // Actually, we must update POSITIONS here too or in a separate loop
+                    // Let's do it here to ensure sync
+                    const updatedPositions = state.positions.map(pos => {
+                        const update = updates.find(u => u.securityId === pos.securityId);
+                        if (!update) return pos;
+
+                        // IF CLOSED, DO NOT UPDATE
+                        if (pos.quantity === 0) return pos;
+
+                        const newLtp = update.ltp || pos.ltp;
+                        const unrealizedPnl = pos.quantity > 0
+                            ? (newLtp - pos.avgBuyPrice) * pos.quantity
+                            : (pos.avgSellPrice - newLtp) * Math.abs(pos.quantity);
+
+                        return {
+                            ...pos,
+                            ltp: newLtp,
+                            unrealizedPnl,
+                            totalPnl: pos.realizedPnl + unrealizedPnl
+                        };
+                    });
+
+                    return { watchlist: updatedWatchlist, positions: updatedPositions };
                 });
 
-                // Also update positions with new LTP
-                const state = get();
-                updates.forEach(update => {
-                    if (update.securityId && update.ltp !== undefined) {
-                        state.updatePosition(update.securityId, update.ltp);
-                    }
-                });
+                // Trigger global account summary update if needed, but doing it on every tick is expensive.
+                // Optimally throttled or reactive.
+                // For now, let's leave account summary to specific events or simple reactivity.
+                // Actually, P&L changes affect account summary (totalPnl). 
+                // We should update account summary here? 
+                // Yes, otherwise Total P&L header won't update.
+                get().updateAccountSummary(); // Call explicitly after state update
 
                 // Check and trigger SL orders
-                state.checkAndTriggerSLOrders();
+                get().checkAndTriggerSLOrders();
             },
 
             reorderWatchlist: (items) => {
@@ -540,7 +573,8 @@ export const useTradingStore = create<TradingStore>()(
 
                 // For paper trading, execute market orders immediately
                 if (orderData.orderType === 'MARKET') {
-                    const watchlistItem = get().watchlist.find(w => w.id === orderData.securityId);
+                    const watchlistItem = get().watchlist.find(w => w.securityId === orderData.securityId);
+                    // Use live LTP from watchlist if available, else use the price passed (which is usually last known LTP)
                     const executionPrice = watchlistItem?.ltp || orderData.price;
 
                     newOrder.status = 'EXECUTED';
@@ -616,7 +650,7 @@ export const useTradingStore = create<TradingStore>()(
 
                 slOrders.forEach(order => {
                     // Get current price from watchlist
-                    const instrument = watchlist.find(w => w.id === order.securityId);
+                    const instrument = watchlist.find(w => w.securityId === order.securityId);
                     if (!instrument) return;
 
                     const currentPrice = instrument.ltp;
@@ -704,8 +738,11 @@ export const useTradingStore = create<TradingStore>()(
 
                 // For F&O, we need to send quantity in LOTS to placeOrder
                 // The store calculates actual units (qty * lotSize) during execution
-                const lotSize = position.lotSize || 1;
-                const quantityInLots = Math.abs(position.quantity / lotSize);
+                const instrumentDetails = get().getInstrumentDetails(position.symbol, position.segment);
+                const currentLotSize = instrumentDetails.lotSize;
+                const quantityInLots = Math.abs(position.quantity / currentLotSize);
+
+                console.log(`[DEBUG] Closing position for ${securityId}. Qty: ${position.quantity}, LotSize: ${currentLotSize}, QtyInLots: ${quantityInLots}`);
 
                 // Create closing order
                 const closeOrder: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'> = {
@@ -1023,72 +1060,92 @@ export const useTradingStore = create<TradingStore>()(
                             if (pos.securityId !== order.securityId) return pos;
 
                             const isBuy = order.side === 'BUY';
-                            const newQty = isBuy ? pos.quantity + orderActualQty : pos.quantity - orderActualQty;
+                            let newQty = isBuy ? pos.quantity + orderActualQty : pos.quantity - orderActualQty;
+
+                            // Correct Averaging Logic:
+                            // If adding to position (Same Side): Weighted Average.
+                            // If reducing position (Diff Side): Keep Average Price same.
 
                             let currentRealizedPnl = 0;
                             let realizedPnl = pos.realizedPnl;
                             let avgBuyPrice = pos.avgBuyPrice;
                             let avgSellPrice = pos.avgSellPrice;
 
+                            const isIncreasing = (isBuy && pos.quantity >= 0) || (!isBuy && pos.quantity <= 0);
+                            const isFlipping = (isBuy && pos.quantity < 0 && newQty > 0) || (!isBuy && pos.quantity > 0 && newQty < 0);
+
+                            // Handling Logic
                             if (isBuy) {
-                                // Adding to long or reducing short
+                                // BUY ORDER
                                 if (pos.quantity < 0) {
-                                    // Reducing short position - realize P&L
+                                    // Reducing SHORT position
                                     const closedQty = Math.min(orderActualQty, Math.abs(pos.quantity));
                                     currentRealizedPnl = (pos.avgSellPrice - order.avgPrice) * closedQty;
                                     realizedPnl += currentRealizedPnl;
 
-                                    tradeLog = {
-                                        id: `TL_${Date.now()}`,
-                                        symbol: pos.symbol,
-                                        exchange: pos.exchange,
-                                        productType: pos.productType,
-                                        quantity: closedQty / lotSize,
-                                        lotSize: lotSize,
-                                        buyPrice: order.avgPrice,
-                                        sellPrice: pos.avgSellPrice,
-                                        realizedPnl: currentRealizedPnl,
-                                        timestamp: Date.now(),
-                                        type: 'SHORT_CLOSE'
-                                    };
-                                }
-                                // Update average buy price
-                                const totalBuyQty = pos.buyQty + orderActualQty;
-                                if (totalBuyQty > 0) {
-                                    avgBuyPrice = ((pos.avgBuyPrice * pos.buyQty) + (order.avgPrice * orderActualQty)) / totalBuyQty;
+                                    if (isFlipping) {
+                                        // Remaining part is new Long
+                                        avgBuyPrice = order.avgPrice;
+                                    } else {
+                                        // Still Short or Flat: avgBuyPrice doesn't matter or stays same
+                                        // But we should NOT update avgSellPrice
+                                    }
+                                } else {
+                                    // Adding to LONG position
+                                    const totalQty = pos.quantity + orderActualQty;
+                                    avgBuyPrice = ((pos.avgBuyPrice * pos.quantity) + (order.avgPrice * orderActualQty)) / totalQty;
                                 }
                             } else {
-                                // Adding to short or reducing long
+                                // SELL ORDER
                                 if (pos.quantity > 0) {
-                                    // Reducing long position - realize P&L
+                                    // Reducing LONG position
                                     const closedQty = Math.min(orderActualQty, pos.quantity);
                                     currentRealizedPnl = (order.avgPrice - pos.avgBuyPrice) * closedQty;
                                     realizedPnl += currentRealizedPnl;
 
-                                    tradeLog = {
-                                        id: `TL_${Date.now()}`,
-                                        symbol: pos.symbol,
-                                        exchange: pos.exchange,
-                                        productType: pos.productType,
-                                        quantity: closedQty / lotSize,
-                                        lotSize: lotSize,
-                                        buyPrice: pos.avgBuyPrice,
-                                        sellPrice: order.avgPrice,
-                                        realizedPnl: currentRealizedPnl,
-                                        timestamp: Date.now(),
-                                        type: 'LONG_CLOSE'
-                                    };
-                                }
-                                // Update average sell price
-                                const totalSellQty = pos.sellQty + orderActualQty;
-                                if (totalSellQty > 0) {
-                                    avgSellPrice = ((pos.avgSellPrice * pos.sellQty) + (order.avgPrice * orderActualQty)) / totalSellQty;
+                                    if (isFlipping) {
+                                        // Remaining part is new Short
+                                        avgSellPrice = order.avgPrice;
+                                    } else {
+                                        // Still Long or Flat
+                                        // Do NOT update avgBuyPrice
+                                    }
+                                } else {
+                                    // Adding to SHORT position (pos.quantity is negative or 0)
+                                    const totalAbsQty = Math.abs(pos.quantity) + orderActualQty;
+                                    // Use absolute quantities for weighting
+                                    avgSellPrice = ((pos.avgSellPrice * Math.abs(pos.quantity)) + (order.avgPrice * orderActualQty)) / totalAbsQty;
                                 }
                             }
 
-                            const unrealizedPnl = newQty > 0
-                                ? (pos.ltp - avgBuyPrice) * newQty
-                                : (avgSellPrice - pos.ltp) * Math.abs(newQty);
+                            // Trade Log generation (Simplified for brevity, similar to before but using calculated realizedPnl)
+                            if (currentRealizedPnl !== 0) {
+                                tradeLog = {
+                                    id: `TL_${Date.now()}`,
+                                    symbol: pos.symbol,
+                                    exchange: pos.exchange,
+                                    productType: pos.productType,
+                                    quantity: Math.min(orderActualQty, Math.abs(pos.quantity)) / lotSize, // Lots closed
+                                    lotSize: lotSize,
+                                    buyPrice: isBuy ? order.avgPrice : pos.avgBuyPrice,
+                                    sellPrice: isBuy ? pos.avgSellPrice : order.avgPrice,
+                                    realizedPnl: currentRealizedPnl,
+                                    segment: pos.segment, // Added for charge calculation
+                                    timestamp: Date.now(),
+                                    type: isBuy ? 'SHORT_CLOSE' : 'LONG_CLOSE'
+                                };
+                            }
+
+                            // Force quantity to 0 if it's very close (floating point fix)
+                            if (Math.abs(newQty) < 0.001) {
+                                newQty = 0;
+                            }
+
+                            const unrealizedPnl = newQty !== 0
+                                ? (newQty > 0 ? (pos.ltp - avgBuyPrice) * newQty : (avgSellPrice - pos.ltp) * Math.abs(newQty))
+                                : 0;
+
+                            const finalLtp = newQty === 0 ? order.avgPrice : pos.ltp; // If closed, show exit price as LTP
 
                             return {
                                 ...pos,
@@ -1097,6 +1154,7 @@ export const useTradingStore = create<TradingStore>()(
                                 sellQty: !isBuy ? pos.sellQty + orderActualQty : pos.sellQty,
                                 avgBuyPrice,
                                 avgSellPrice,
+                                ltp: finalLtp,
                                 realizedPnl,
                                 unrealizedPnl,
                                 totalPnl: realizedPnl + unrealizedPnl
