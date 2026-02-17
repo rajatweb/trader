@@ -1,0 +1,1059 @@
+// @ts-nocheck
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+
+// ============================================
+// TYPES & INTERFACES
+// ============================================
+
+export interface WatchlistItem {
+    securityId: string; // securityId
+    symbol: string;
+    exchange: 'NSE' | 'BSE' | 'MCX';
+    segment: string; // NSE_EQ, NSE_FNO, etc.
+    ltp: number;
+    change: number;
+    changePercent: number;
+    prevClose?: number;
+    open?: number;
+    high?: number;
+    low?: number;
+    volume?: number;
+    isIndex?: boolean;
+}
+
+export type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
+export type OrderSide = 'BUY' | 'SELL';
+export type OrderStatus = 'PENDING' | 'OPEN' | 'EXECUTED' | 'CANCELLED' | 'REJECTED';
+export type ProductType = 'CNC' | 'MIS' | 'NRML';
+
+export interface Order {
+    orderId: string;
+    securityId: string;
+    symbol: string;
+    exchange: string;
+    segment: string;
+    side: OrderSide;
+    orderType: OrderType;
+    productType: ProductType;
+    quantity: number;
+    price: number; // Limit/SL price
+    triggerPrice?: number; // For SL orders
+    status: OrderStatus;
+    filledQty: number;
+    avgPrice: number;
+    timestamp: number;
+    executedAt?: number;
+    rejectionReason?: string;
+}
+
+export interface Position {
+    securityId: string;
+    symbol: string;
+    exchange: string;
+    segment: string;
+    productType: ProductType;
+    quantity: number; // Net quantity (actual units, lots * lotSize for F&O)
+    buyQty: number;   // Actual units
+    sellQty: number;  // Actual units
+    avgBuyPrice: number;
+    avgSellPrice: number;
+    ltp: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    totalPnl: number;
+    lotSize: number; // Stored lot size
+}
+
+export interface TradeLog {
+    id: string;
+    symbol: string;
+    exchange: string;
+    productType: ProductType;
+    quantity: number; // lots or shares
+    lotSize: number;
+    buyPrice: number;
+    sellPrice: number;
+    realizedPnl: number;
+    timestamp: number;
+    type: 'LONG_CLOSE' | 'SHORT_CLOSE';
+}
+
+export interface DailyStats {
+    date: string; // YYYY-MM-DD
+    realizedPnl: number;
+    tradeCount: number;
+}
+
+export interface MarginRequirement {
+    securityId: string;
+    symbol: string;
+    orderType: OrderType;
+    productType: ProductType;
+    quantity: number;
+    price: number;
+    requiredMargin: number;
+    availableMargin: number;
+    sufficient: boolean;
+}
+
+export interface AccountSummary {
+    totalCapital: number;
+    availableMargin: number;
+    usedMargin: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    totalPnl: number;
+    marginUtilization: number; // Percentage
+}
+
+// ============================================
+// LOT SIZE MAPPING (F&O Contracts)
+// ============================================
+
+// Lot sizes for different F&O instruments (Updated as of 2026)
+const LOT_SIZE_MAP: Record<string, number> = {
+    // Index Options (NSE)
+    'NIFTY': 65,
+    'BANKNIFTY': 30,
+    'FINNIFTY': 40,
+    'MIDCPNIFTY': 75,
+    'SENSEX': 20,
+    'BANKEX': 15,
+
+    // Commodity Options (MCX)
+    'CRUDEOIL': 100,
+    'NATURALGAS': 1250,
+    'GOLD': 100,
+    'GOLDM': 10,
+    'SILVER': 30,
+    'SILVERM': 5,
+    'COPPER': 1000,
+    'ZINC': 5000,
+    'LEAD': 5000,
+    'ALUMINIUM': 5000,
+    'NICKEL': 250,
+};
+
+// Helper function to get lot size
+export const getLotSize = (symbol: string, segment: string): number => {
+    // For equity, lot size is 1
+    if (segment.includes('_EQ')) {
+        return 1;
+    }
+
+    // For F&O, check the base symbol
+    const baseSymbol = symbol.split(/\d/)[0].trim().toUpperCase(); // Extract base symbol (e.g., "NIFTY" from "NIFTY 22000 CE")
+
+    // Check in lot size map
+    for (const [key, lotSize] of Object.entries(LOT_SIZE_MAP)) {
+        if (baseSymbol.includes(key)) {
+            return lotSize;
+        }
+    }
+
+    // Default lot size for unknown F&O contracts
+    return 1;
+};
+
+// Helper to get instrument details
+export const getInstrumentDetails = (symbol: string, segment: string) => {
+    const lotSize = getLotSize(symbol, segment);
+    const isEquity = segment.includes('_EQ');
+    const isOptions = segment.includes('_FNO') || segment.includes('NFO') || segment.includes('BFO');
+    const isFutures = segment.includes('_FUT');
+    const isCommodity = segment.includes('MCX');
+
+    return {
+        lotSize,
+        isEquity,
+        isOptions,
+        isFutures,
+        isCommodity,
+        contractType: isEquity ? 'Equity' : isOptions ? 'Options' : isFutures ? 'Futures' : 'Commodity'
+    };
+};
+
+// ============================================
+// STORE INTERFACE
+// ============================================
+
+interface TradingStore {
+    // Watchlist
+    watchlist: WatchlistItem[];
+    addToWatchlist: (item: WatchlistItem) => void;
+    removeFromWatchlist: (securityId: string) => void;
+    updateWatchlistPrices: (updates: Partial<WatchlistItem>[]) => void;
+    reorderWatchlist: (items: WatchlistItem[]) => void;
+
+    // Orders
+    orders: Order[];
+    placeOrder: (order: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'>) => string;
+    cancelOrder: (orderId: string) => void;
+    updateOrderStatus: (orderId: string, status: OrderStatus, filledQty?: number, avgPrice?: number) => void;
+    getOrdersByStatus: (status: OrderStatus) => Order[];
+    getPendingOrders: () => Order[];
+    checkAndTriggerSLOrders: () => void;
+
+    // Positions
+    positions: Position[];
+    tradeHistory: TradeLog[];
+    dailyStats: DailyStats[];
+    updatePosition: (securityId: string, ltp: number) => void;
+    closePosition: (securityId: string) => void;
+    getPositionBySecurityId: (securityId: string) => Position | undefined;
+
+    // Account & Margin
+    account: AccountSummary;
+    calculateMargin: (order: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'>) => MarginRequirement;
+    updateAccountSummary: () => void;
+
+    // Broker Connection
+    isConnected: boolean;
+    brokerCredentials: { clientId: string; accessToken: string } | null;
+    connectBroker: (clientId: string, accessToken: string) => void;
+    disconnectBroker: () => void;
+
+    // Utilities
+    reset: () => void;
+    addFunds: (amount: number) => void;
+    checkAutoSquareOff: () => void;
+    getInstrumentDetails: (symbol: string, segment: string) => ReturnType<typeof getInstrumentDetails>;
+
+    // Settlement
+    lastSettlementDate: string;
+    performDailySettlement: () => void;
+}
+
+// ============================================
+// INITIAL STATE
+// ============================================
+
+const initialAccount: AccountSummary = {
+    totalCapital: 100000, // Default paper trading capital
+    availableMargin: 100000,
+    usedMargin: 0,
+    realizedPnl: 0,
+    unrealizedPnl: 0,
+    totalPnl: 0,
+    marginUtilization: 0
+};
+
+// ============================================
+// STORE IMPLEMENTATION
+// ============================================
+
+// ============================================
+// CHARGES CALCULATOR (Estimated for Indian Markets)
+// ============================================
+const calculateCharges = (trade: TradeLog): number => {
+    let brokerage = 0;
+    let stt = 0;
+    let exchangeTxn = 0;
+    let gst = 0;
+    let sebi = 0;
+    let stampDuty = 0;
+
+    const turnover = (trade.buyPrice + trade.sellPrice) * trade.quantity * trade.lotSize;
+
+    // Brokerage (assuming flat ₹20 or 0.03% whichever is lower for Intraday/F&O)
+    // Equity Delivery is usually 0 but we'll stick to a simple model for now
+    if (trade.productType === 'MIS' || trade.exchange === 'MCX') {
+        brokerage = Math.min(turnover * 0.0003, 20);
+    } else {
+        brokerage = 0; // Equity Delivery Free
+    }
+
+    // STT/CTT
+    if (trade.productType === 'CNC') {
+        stt = turnover * 0.001; // 0.1% on Delivery
+    } else if (trade.productType === 'MIS') {
+        stt = (trade.sellPrice * trade.quantity * trade.lotSize) * 0.00025; // 0.025% on Sell only
+    } else {
+        // Options/Futures logic simplified
+        stt = (trade.sellPrice * trade.quantity * trade.lotSize) * 0.00125; // Options Sell
+    }
+
+    // Exchange Txn Charges (approx 0.00325% for NSE Equity)
+    exchangeTxn = turnover * 0.0000325;
+
+    // GST (18% on Brokerage + Txn Charges)
+    gst = (brokerage + exchangeTxn) * 0.18;
+
+    // SEBI Charges (₹10 per crore)
+    sebi = turnover * 0.000001;
+
+    // Stamp Duty (0.003% on Buy only - approx half turnover)
+    stampDuty = (trade.buyPrice * trade.quantity * trade.lotSize) * 0.00003;
+
+    return brokerage + stt + exchangeTxn + gst + sebi + stampDuty;
+};
+
+export const useTradingStore = create<TradingStore>()(
+    persist(
+        (set, get) => ({
+            // Initial State
+            watchlist: [],
+            orders: [],
+            positions: [],
+            tradeHistory: [],
+            dailyStats: [],
+            account: initialAccount,
+            isConnected: false,
+            brokerCredentials: null,
+            lastSettlementDate: '1970-01-01', // Force settlement on first run
+
+            // ============================================
+            // WATCHLIST ACTIONS
+            // ============================================
+
+            addToWatchlist: (item) => {
+                const { watchlist } = get();
+                if (!watchlist.find(w => w.securityId === item.securityId)) {
+                    set({ watchlist: [...watchlist, item] });
+                }
+            },
+
+            removeFromWatchlist: (securityId) => {
+                set((state) => ({
+                    watchlist: state.watchlist.filter(w => w.securityId !== securityId)
+                }));
+            },
+
+            updateWatchlistPrices: (updates) => {
+                set((state) => {
+                    const updatedWatchlist = state.watchlist.map(item => {
+                        const update = updates.find(u => u.securityId === item.securityId);
+                        if (!update) return item;
+
+                        const newLtp = update.ltp ?? item.ltp;
+                        const prevClose = update.prevClose ?? item.prevClose ?? newLtp;
+                        const change = newLtp - prevClose;
+                        const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+
+                        return {
+                            ...item,
+                            ...update,
+                            ltp: newLtp,
+                            change,
+                            changePercent,
+                            prevClose
+                        };
+                    });
+                    return { watchlist: updatedWatchlist };
+                });
+
+                // Also update positions with new LTP
+                const state = get();
+                updates.forEach(update => {
+                    if (update.securityId && update.ltp !== undefined) {
+                        state.updatePosition(update.securityId, update.ltp);
+                    }
+                });
+
+                // Check and trigger SL orders
+                state.checkAndTriggerSLOrders();
+            },
+
+            reorderWatchlist: (items) => {
+                set({ watchlist: items });
+            },
+
+            performDailySettlement: () => {
+                const state = get();
+                const now = new Date();
+                const currentHour = now.getHours();
+                const todayStr = now.toISOString().split('T')[0];
+
+                // Rule: Settlement runs only after 6:00 AM
+                // If we already settled today, don't run.
+                // If it's before 6 AM, don't run (wait for 6 AM).
+                if (state.lastSettlementDate === todayStr) return;
+                if (currentHour < 6) return;
+
+                console.log('[Settlement] Running daily settlement...');
+
+                // Calculate charges for all unsettled trades (trades after the last settlement date)
+                // We compare timestamps to find trades that happened after the last run but before "today's session" (technically yesterday's trades)
+
+                const tradesToSettle = state.tradeHistory.filter(trade => {
+                    const tradeDate = new Date(trade.timestamp).toISOString().split('T')[0];
+                    // Settle any trade that is NOT today (since today's session is active or hasn't started)
+                    // and hasn't been settled (implied by filtering against lastSettlementDate if we tracked it strictly)
+                    // For this simple store, we settle everything that is < Today.
+                    // This assumes previous settlements cleared everything before them.
+                    return tradeDate < todayStr;
+                });
+
+                // However, we don't want to double-charge if lastSettlementDate was yesterday.
+                // We should only charge trades that happened matching the period we missed.
+                // Simpler Logic: 
+                // We settle trades where Date(trade) > Date(lastSettlementDate) AND Date(trade) < todayStr.
+
+                const lastSettlement = new Date(state.lastSettlementDate);
+                const settleableTrades = tradesToSettle.filter(trade => {
+                    const tradeDate = new Date(trade.timestamp);
+                    // Just strictly compare date strings to avoid timezone mess for now
+                    const tradeDateStr = tradeDate.toISOString().split('T')[0];
+                    return tradeDateStr > state.lastSettlementDate && tradeDateStr < todayStr;
+                });
+
+                let totalCharges = 0;
+                settleableTrades.forEach(trade => {
+                    totalCharges += calculateCharges(trade);
+                });
+
+                // Clear Closed Positions AND MIS positions
+                // We remove them from the 'positions' array
+                const activePositions = state.positions.filter(pos => {
+                    // Always keep open Delivery/Normal positions
+                    if (pos.quantity !== 0 && pos.productType !== 'MIS') return true;
+                    return false;
+                });
+
+                const newAccount = {
+                    ...state.account,
+                    totalCapital: state.account.totalCapital - totalCharges,
+                    availableMargin: state.account.availableMargin - totalCharges,
+                };
+
+                console.log(`[Settlement] Deducted ₹${totalCharges.toFixed(2)} charges. Cleared ${state.positions.length - activePositions.length} positions.`);
+
+                set({
+                    positions: activePositions,
+                    account: newAccount,
+                    lastSettlementDate: todayStr
+                });
+            },
+
+            // ============================================
+            // ORDER ACTIONS
+            // ============================================
+
+            placeOrder: (orderData) => {
+                const orderId = `ORD_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+                const newOrder: Order = {
+                    ...orderData,
+                    orderId,
+                    timestamp: Date.now(),
+                    status: 'PENDING',
+                    filledQty: 0,
+                    avgPrice: 0
+                };
+
+                // Check margin
+                const marginCheck = get().calculateMargin(orderData);
+                if (!marginCheck.sufficient) {
+                    // Reject order due to insufficient margin
+                    newOrder.status = 'REJECTED';
+                    newOrder.rejectionReason = 'Insufficient margin';
+                    set((state) => ({ orders: [...state.orders, newOrder] }));
+                    return orderId;
+                }
+
+                // For paper trading, execute market orders immediately
+                if (orderData.orderType === 'MARKET') {
+                    const watchlistItem = get().watchlist.find(w => w.id === orderData.securityId);
+                    const executionPrice = watchlistItem?.ltp || orderData.price;
+
+                    newOrder.status = 'EXECUTED';
+                    newOrder.filledQty = orderData.quantity;
+                    newOrder.avgPrice = executionPrice;
+                    newOrder.executedAt = Date.now();
+
+                    // Update position
+                    get().executeOrder(newOrder);
+                } else {
+                    // Limit/SL orders remain open
+                    newOrder.status = 'OPEN';
+                }
+
+                set((state) => ({ orders: [...state.orders, newOrder] }));
+                get().updateAccountSummary();
+
+                return orderId;
+            },
+
+            cancelOrder: (orderId) => {
+                set((state) => ({
+                    orders: state.orders.map(order =>
+                        order.orderId === orderId && (order.status === 'PENDING' || order.status === 'OPEN')
+                            ? { ...order, status: 'CANCELLED' as OrderStatus }
+                            : order
+                    )
+                }));
+                get().updateAccountSummary();
+            },
+
+            updateOrderStatus: (orderId, status, filledQty, avgPrice) => {
+                set((state) => ({
+                    orders: state.orders.map(order => {
+                        if (order.orderId !== orderId) return order;
+
+                        const updatedOrder = {
+                            ...order,
+                            status,
+                            ...(filledQty !== undefined && { filledQty }),
+                            ...(avgPrice !== undefined && { avgPrice }),
+                            ...(status === 'EXECUTED' && { executedAt: Date.now() })
+                        };
+
+                        // Execute the order if status is EXECUTED
+                        if (status === 'EXECUTED') {
+                            get().executeOrder(updatedOrder);
+                        }
+
+                        return updatedOrder;
+                    })
+                }));
+                get().updateAccountSummary();
+            },
+
+            getOrdersByStatus: (status) => {
+                return get().orders.filter(order => order.status === status);
+            },
+
+            getPendingOrders: () => {
+                return get().orders.filter(order => order.status === 'PENDING' || order.status === 'OPEN');
+            },
+
+            checkAndTriggerSLOrders: () => {
+                const { orders, watchlist } = get();
+
+                // Find all open SL/SL-M orders
+                const slOrders = orders.filter(order =>
+                    order.status === 'OPEN' &&
+                    (order.orderType === 'SL' || order.orderType === 'SL-M') &&
+                    order.triggerPrice !== undefined
+                );
+
+                slOrders.forEach(order => {
+                    // Get current price from watchlist
+                    const instrument = watchlist.find(w => w.id === order.securityId);
+                    if (!instrument) return;
+
+                    const currentPrice = instrument.ltp;
+                    const triggerPrice = order.triggerPrice!;
+
+                    // Check if trigger condition is met
+                    let shouldTrigger = false;
+
+                    if (order.side === 'BUY') {
+                        // Buy SL: Trigger when price rises to or above trigger price
+                        shouldTrigger = currentPrice >= triggerPrice;
+                    } else {
+                        // Sell SL: Trigger when price falls to or below trigger price
+                        shouldTrigger = currentPrice <= triggerPrice;
+                    }
+
+                    if (shouldTrigger) {
+                        // Determine execution price
+                        let executionPrice: number;
+
+                        if (order.orderType === 'SL-M') {
+                            // SL-M: Execute at market price (current LTP)
+                            executionPrice = currentPrice;
+                        } else {
+                            // SL: Execute at limit price (order.price)
+                            executionPrice = order.price;
+
+                            // Check if limit price can be filled
+                            // For buy: current price should be <= limit price
+                            // For sell: current price should be >= limit price
+                            const canFill = order.side === 'BUY'
+                                ? currentPrice <= executionPrice
+                                : currentPrice >= executionPrice;
+
+                            if (!canFill) {
+                                // Limit price not reachable, order remains open
+                                return;
+                            }
+                        }
+
+                        // Execute the SL order
+                        get().updateOrderStatus(
+                            order.orderId,
+                            'EXECUTED',
+                            order.quantity,
+                            executionPrice
+                        );
+
+                        console.log(`SL Order triggered: ${order.symbol} ${order.side} ${order.quantity} @ ₹${executionPrice.toFixed(2)}`);
+                    }
+                });
+            },
+
+            // ============================================
+            // POSITION ACTIONS
+            // ============================================
+
+            updatePosition: (securityId, ltp) => {
+                set((state) => ({
+                    positions: state.positions.map(pos => {
+                        if (pos.securityId !== securityId) return pos;
+
+                        // IF POSITION IS CLOSED, DON'T UPDATE LIVE P&L or LTP
+                        // This keeps the P&L fixed at the exit price
+                        if (pos.quantity === 0) return pos;
+
+                        const unrealizedPnl = pos.quantity > 0
+                            ? (ltp - pos.avgBuyPrice) * pos.quantity
+                            : (pos.avgSellPrice - ltp) * Math.abs(pos.quantity);
+
+                        return {
+                            ...pos,
+                            ltp,
+                            unrealizedPnl,
+                            totalPnl: pos.realizedPnl + unrealizedPnl
+                        };
+                    })
+                }));
+                get().updateAccountSummary();
+            },
+
+            closePosition: (securityId) => {
+                const position = get().positions.find(p => p.securityId === securityId);
+                if (!position || position.quantity === 0) return;
+
+                // For F&O, we need to send quantity in LOTS to placeOrder
+                // The store calculates actual units (qty * lotSize) during execution
+                const lotSize = position.lotSize || 1;
+                const quantityInLots = Math.abs(position.quantity / lotSize);
+
+                // Create closing order
+                const closeOrder: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'> = {
+                    securityId: position.securityId,
+                    symbol: position.symbol,
+                    exchange: position.exchange,
+                    segment: position.segment,
+                    side: position.quantity > 0 ? 'SELL' : 'BUY',
+                    orderType: 'MARKET',
+                    productType: position.productType,
+                    quantity: quantityInLots,
+                    price: position.ltp
+                };
+
+                get().placeOrder(closeOrder);
+            },
+
+            getPositionBySecurityId: (securityId) => {
+                return get().positions.find(p => p.securityId === securityId);
+            },
+
+            // ============================================
+            // MARGIN & ACCOUNT ACTIONS
+            // ============================================
+
+            calculateMargin: (order) => {
+                const { account, positions } = get();
+                let requiredMargin = 0;
+
+                // Get instrument details including lot size
+                const instrumentDetails = get().getInstrumentDetails(order.symbol, order.segment);
+                const lotSize = instrumentDetails.lotSize;
+
+                // Calculate order value (price × quantity × lot size for F&O)
+                const actualQuantity = instrumentDetails.isEquity ? order.quantity : order.quantity * lotSize;
+                const orderValue = order.price * actualQuantity;
+
+                // CHECK IF THIS ORDER REDUCES AN EXISTING POSITION
+                // If so, margin should be 0 (or significantly reduced)
+                const existingPosition = positions.find(p => p.securityId === order.securityId);
+                const isReducingPosition = existingPosition && (
+                    (existingPosition.quantity > 0 && order.side === 'SELL') ||
+                    (existingPosition.quantity < 0 && order.side === 'BUY')
+                );
+
+                if (isReducingPosition) {
+                    // Margin is 0 for reducing position (closing/SL order)
+                    requiredMargin = 0;
+                } else if (instrumentDetails.isEquity) {
+                    // EQUITY MARGIN RULES
+                    if (order.productType === 'CNC') {
+                        // Cash & Carry: 100% cash required
+                        requiredMargin = orderValue;
+                    } else if (order.productType === 'MIS') {
+                        // Intraday: ~20% margin (5x leverage)
+                        requiredMargin = orderValue * 0.2;
+                    } else {
+                        // NRML not applicable for equity
+                        requiredMargin = orderValue;
+                    }
+                } else if (instrumentDetails.isOptions) {
+                    // OPTIONS MARGIN RULES
+                    if (order.side === 'BUY') {
+                        // Option BUY: Premium only (no margin)
+                        requiredMargin = orderValue;
+                    } else {
+                        // Option SELL (Writing): SPAN + Exposure margin
+                        // Use actual contract value based on lot size
+                        const strikePrice = order.price * 100; // Approximate strike from premium
+                        const contractValue = strikePrice * actualQuantity;
+
+                        if (order.productType === 'MIS') {
+                            // MIS: ~40% of NRML margin
+                            requiredMargin = contractValue * 0.15 * 0.4;
+                        } else {
+                            // NRML: Full SPAN + Exposure (~15-20%)
+                            requiredMargin = contractValue * 0.15;
+                        }
+                    }
+                } else if (instrumentDetails.isFutures) {
+                    // FUTURES MARGIN
+                    if (order.productType === 'MIS') {
+                        requiredMargin = orderValue * 0.08; // ~8% for MIS futures
+                    } else {
+                        requiredMargin = orderValue * 0.20; // ~20% for NRML futures
+                    }
+                } else {
+                    // Commodity or other segments
+                    requiredMargin = orderValue * 0.15;
+                }
+
+                return {
+                    securityId: order.securityId,
+                    symbol: order.symbol,
+                    orderType: order.orderType,
+                    productType: order.productType,
+                    quantity: order.quantity,
+                    price: order.price,
+                    requiredMargin,
+                    availableMargin: account.availableMargin,
+                    sufficient: account.availableMargin >= requiredMargin
+                };
+            },
+
+            updateAccountSummary: () => {
+                const { positions, account } = get();
+
+                const realizedPnl = positions.reduce((sum, pos) => sum + pos.realizedPnl, 0);
+                const unrealizedPnl = positions.reduce((sum, pos) => sum + pos.unrealizedPnl, 0);
+                const totalPnl = realizedPnl + unrealizedPnl;
+
+                const usedMargin = positions.reduce((sum, pos) => {
+                    const positionValue = Math.abs(pos.quantity) * pos.ltp;
+                    return sum + (positionValue * 0.2); // Simplified margin calc
+                }, 0);
+
+                const availableMargin = account.totalCapital + realizedPnl - usedMargin;
+                const marginUtilization = account.totalCapital > 0 ? (usedMargin / account.totalCapital) * 100 : 0;
+
+                set({
+                    account: {
+                        ...account,
+                        availableMargin,
+                        usedMargin,
+                        realizedPnl,
+                        unrealizedPnl,
+                        totalPnl,
+                        marginUtilization
+                    }
+                });
+            },
+
+            // ============================================
+            // SETTLEMENT
+            // ============================================
+
+            performDailySettlement: () => {
+                const state = get();
+                const now = new Date();
+                const currentHour = now.getHours();
+                const todayStr = now.toISOString().split('T')[0];
+
+                // Rule: Settlement runs only after 6:00 AM
+                if (state.lastSettlementDate === todayStr) return;
+                if (currentHour < 6) return;
+
+                console.log('[Settlement] Running daily cleanup...');
+
+                // NOT CALCUATING CHARGES HERE ANYMORE as they are settled real-time.
+                // This function is now purely for POSITION CLEANUP.
+
+                // Clear Closed Positions AND MIS positions
+                const activePositions = state.positions.filter(pos => {
+                    // Always keep open Delivery/Normal positions
+                    if (pos.quantity !== 0 && pos.productType !== 'MIS') return true;
+                    return false;
+                });
+
+                console.log(`[Settlement] Cleanup: Cleared ${state.positions.length - activePositions.length} positions.`);
+
+                set({
+                    positions: activePositions,
+                    lastSettlementDate: todayStr
+                });
+            },
+
+            // ============================================
+            // BROKER CONNECTION
+            // ============================================
+
+            connectBroker: (clientId, accessToken) => {
+                set({
+                    isConnected: true,
+                    brokerCredentials: { clientId, accessToken }
+                });
+            },
+
+            disconnectBroker: () => {
+                set({
+                    isConnected: false,
+                    brokerCredentials: null
+                });
+            },
+
+            // ============================================
+            // UTILITIES
+            // ============================================
+
+            reset: () => {
+                set((state) => ({
+                    watchlist: [],
+                    orders: [],
+                    positions: [],
+                    tradeHistory: [],
+                    dailyStats: [],
+                    account: initialAccount,
+                    isConnected: state.isConnected,
+                    brokerCredentials: state.brokerCredentials
+                }));
+            },
+
+            addFunds: (amount: number) => {
+                set((state) => ({
+                    account: {
+                        ...state.account,
+                        totalCapital: state.account.totalCapital + amount,
+                        availableMargin: state.account.availableMargin + amount
+                    }
+                }));
+            },
+
+            checkAutoSquareOff: () => {
+                const now = new Date();
+                const hours = now.getHours();
+                const minutes = now.getMinutes();
+                const currentTime = hours * 100 + minutes; // HHMM format
+
+                const { positions, closePosition } = get();
+
+                positions.forEach(pos => {
+                    // Only auto-square off MIS (Intraday) positions that are still open
+                    if (pos.productType !== 'MIS' || pos.quantity === 0) return;
+
+                    let shouldSquareOff = false;
+
+                    if (pos.exchange === 'MCX') {
+                        // MCX: Square off at 11:15 PM (2315)
+                        if (currentTime >= 2315) shouldSquareOff = true;
+                    } else {
+                        // NSE/BSE: Square off at 3:15 PM (1515)
+                        if (currentTime >= 1515 && currentTime < 1600) shouldSquareOff = true;
+                    }
+
+                    if (shouldSquareOff) {
+                        console.log(`[Auto Square-off] Triggered for ${pos.symbol} (${pos.productType})`);
+                        closePosition(pos.securityId);
+                    }
+                });
+            },
+
+            getInstrumentDetails: (symbol: string, segment: string) => {
+                return getInstrumentDetails(symbol, segment);
+            },
+
+            // ============================================
+            // INTERNAL HELPERS (not exposed in interface)
+            executeOrder: (order: Order) => {
+                set((state) => {
+                    const existingPosition = state.positions.find(p => p.securityId === order.securityId);
+
+                    // Get lot size for calculation
+                    const instrumentDetails = get().getInstrumentDetails(order.symbol, order.segment);
+                    const lotSize = instrumentDetails.lotSize;
+                    const orderActualQty = instrumentDetails.isEquity ? order.filledQty : order.filledQty * lotSize;
+
+                    let tradeLog: TradeLog | null = null;
+                    const today = new Date().toISOString().split('T')[0];
+                    let charges = 0;
+                    let netPnl = 0;
+
+                    if (!existingPosition) {
+                        // Create new position with actual quantity
+                        const newPosition: Position = {
+                            securityId: order.securityId,
+                            symbol: order.symbol,
+                            exchange: order.exchange,
+                            segment: order.segment,
+                            productType: order.productType,
+                            quantity: order.side === 'BUY' ? orderActualQty : -orderActualQty,
+                            buyQty: order.side === 'BUY' ? orderActualQty : 0,
+                            sellQty: order.side === 'SELL' ? orderActualQty : 0,
+                            avgBuyPrice: order.side === 'BUY' ? order.avgPrice : 0,
+                            avgSellPrice: order.side === 'SELL' ? order.avgPrice : 0,
+                            ltp: order.avgPrice,
+                            realizedPnl: 0,
+                            unrealizedPnl: 0,
+                            totalPnl: 0,
+                            lotSize: lotSize
+                        };
+
+                        return { positions: [...state.positions, newPosition] };
+                    } else {
+                        // Update existing position
+                        const updatedPositions = state.positions.map(pos => {
+                            if (pos.securityId !== order.securityId) return pos;
+
+                            const isBuy = order.side === 'BUY';
+                            const newQty = isBuy ? pos.quantity + orderActualQty : pos.quantity - orderActualQty;
+
+                            let currentRealizedPnl = 0;
+                            let realizedPnl = pos.realizedPnl;
+                            let avgBuyPrice = pos.avgBuyPrice;
+                            let avgSellPrice = pos.avgSellPrice;
+
+                            if (isBuy) {
+                                // Adding to long or reducing short
+                                if (pos.quantity < 0) {
+                                    // Reducing short position - realize P&L
+                                    const closedQty = Math.min(orderActualQty, Math.abs(pos.quantity));
+                                    currentRealizedPnl = (pos.avgSellPrice - order.avgPrice) * closedQty;
+                                    realizedPnl += currentRealizedPnl;
+
+                                    tradeLog = {
+                                        id: `TL_${Date.now()}`,
+                                        symbol: pos.symbol,
+                                        exchange: pos.exchange,
+                                        productType: pos.productType,
+                                        quantity: closedQty / lotSize,
+                                        lotSize: lotSize,
+                                        buyPrice: order.avgPrice,
+                                        sellPrice: pos.avgSellPrice,
+                                        realizedPnl: currentRealizedPnl,
+                                        timestamp: Date.now(),
+                                        type: 'SHORT_CLOSE'
+                                    };
+                                }
+                                // Update average buy price
+                                const totalBuyQty = pos.buyQty + orderActualQty;
+                                if (totalBuyQty > 0) {
+                                    avgBuyPrice = ((pos.avgBuyPrice * pos.buyQty) + (order.avgPrice * orderActualQty)) / totalBuyQty;
+                                }
+                            } else {
+                                // Adding to short or reducing long
+                                if (pos.quantity > 0) {
+                                    // Reducing long position - realize P&L
+                                    const closedQty = Math.min(orderActualQty, pos.quantity);
+                                    currentRealizedPnl = (order.avgPrice - pos.avgBuyPrice) * closedQty;
+                                    realizedPnl += currentRealizedPnl;
+
+                                    tradeLog = {
+                                        id: `TL_${Date.now()}`,
+                                        symbol: pos.symbol,
+                                        exchange: pos.exchange,
+                                        productType: pos.productType,
+                                        quantity: closedQty / lotSize,
+                                        lotSize: lotSize,
+                                        buyPrice: pos.avgBuyPrice,
+                                        sellPrice: order.avgPrice,
+                                        realizedPnl: currentRealizedPnl,
+                                        timestamp: Date.now(),
+                                        type: 'LONG_CLOSE'
+                                    };
+                                }
+                                // Update average sell price
+                                const totalSellQty = pos.sellQty + orderActualQty;
+                                if (totalSellQty > 0) {
+                                    avgSellPrice = ((pos.avgSellPrice * pos.sellQty) + (order.avgPrice * orderActualQty)) / totalSellQty;
+                                }
+                            }
+
+                            const unrealizedPnl = newQty > 0
+                                ? (pos.ltp - avgBuyPrice) * newQty
+                                : (avgSellPrice - pos.ltp) * Math.abs(newQty);
+
+                            return {
+                                ...pos,
+                                quantity: newQty,
+                                buyQty: isBuy ? pos.buyQty + orderActualQty : pos.buyQty,
+                                sellQty: !isBuy ? pos.sellQty + orderActualQty : pos.sellQty,
+                                avgBuyPrice,
+                                avgSellPrice,
+                                realizedPnl,
+                                unrealizedPnl,
+                                totalPnl: realizedPnl + unrealizedPnl
+                            };
+                        });
+
+                        // Calculate charges and Net P&L immediately if a trade happened
+                        let newAccount = state.account;
+                        if (tradeLog) {
+                            charges = calculateCharges(tradeLog);
+                            netPnl = tradeLog.realizedPnl - charges;
+
+                            // Update Account Balance immediately
+                            newAccount = {
+                                ...state.account,
+                                totalCapital: state.account.totalCapital + netPnl,
+                                availableMargin: state.account.availableMargin + netPnl,
+                                realizedPnl: state.account.realizedPnl + tradeLog.realizedPnl // Track gross realized too if needed, or net
+                            };
+
+                            // Add charges info to tradeLog for record keeping
+                            // (We need to update the TradeLog type first, but purely for logic it works here as JS object)
+                            // Ideally strictly typed, we should extend TradeLog interface.
+                            // For now, attaching loosely.
+                            (tradeLog as any).charges = charges;
+                            (tradeLog as any).netPnl = netPnl;
+                        }
+
+                        // Update history and stats
+                        const newTradeHistory = tradeLog ? [tradeLog, ...state.tradeHistory] : state.tradeHistory;
+                        let newDailyStats = [...state.dailyStats];
+
+                        if (tradeLog) {
+                            const statsIdx = newDailyStats.findIndex(s => s.date === today);
+                            if (statsIdx >= 0) {
+                                newDailyStats[statsIdx] = {
+                                    ...newDailyStats[statsIdx],
+                                    realizedPnl: newDailyStats[statsIdx].realizedPnl + tradeLog.realizedPnl,
+                                    tradeCount: newDailyStats[statsIdx].tradeCount + 1
+                                };
+                            } else {
+                                newDailyStats.push({
+                                    date: today,
+                                    realizedPnl: tradeLog.realizedPnl,
+                                    tradeCount: 1
+                                });
+                            }
+                        }
+
+                        return {
+                            positions: updatedPositions,
+                            tradeHistory: newTradeHistory,
+                            dailyStats: newDailyStats,
+                            account: newAccount
+                        };
+                    }
+                });
+            }
+        } as any), // Type assertion to handle internal helper methods
+        {
+            name: 'trading-store',
+            storage: createJSONStorage(() => localStorage),
+            partialize: (state) => ({
+                watchlist: state.watchlist,
+                orders: state.orders,
+                positions: state.positions,
+                tradeHistory: state.tradeHistory,
+                dailyStats: state.dailyStats,
+                account: state.account,
+                brokerCredentials: state.brokerCredentials,
+                isConnected: state.isConnected,
+                lastSettlementDate: state.lastSettlementDate
+            })
+        }
+    )
+);
