@@ -1,13 +1,18 @@
 services:
-  web:
-    image: trader-app
+  nextjs:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: trader-app
-    restart: always
     ports:
       - "7000:7000"
-    environment:
-      - NODE_ENV=production
-      - PORT=7000
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run start
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.next.rule=Host(`tader.rajatweb.com`)"
+      - "traefik.http.routers.next.entrypoints=websecure"
+      - "traefik.http.routers.next.tls=true"
+      - "traefik.http.services.next.loadbalancer.server.port=7000"
