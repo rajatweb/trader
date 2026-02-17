@@ -12,7 +12,8 @@ export default function MarketWatch() {
         addToWatchlist,
         removeFromWatchlist,
         reorderWatchlist,
-        isConnected
+        isConnected,
+        feedStatus
     } = useTradingStore();
 
     const [search, setSearch] = useState('');
@@ -101,6 +102,14 @@ export default function MarketWatch() {
             />
 
             {/* Connection Status */}
+            {(feedStatus === 'CONNECTING' || feedStatus === 'DISCONNECTED') && isConnected && (
+                <div className={`border-b px-3 py-1.5 text-xs flex items-center gap-2 ${feedStatus === 'CONNECTING' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' :
+                        'bg-red-50 border-red-200 text-red-800'
+                    }`}>
+                    <div className={`w-2 h-2 rounded-full ${feedStatus === 'CONNECTING' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
+                    {feedStatus === 'CONNECTING' ? 'Connecting to live feed...' : 'Feed Disconnected'}
+                </div>
+            )}
             {!isConnected && watchlist.length > 0 && (
                 <div className="bg-yellow-50 border-b border-yellow-200 px-3 py-1.5 text-xs text-yellow-800 flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div>

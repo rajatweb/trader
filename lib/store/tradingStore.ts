@@ -97,6 +97,7 @@ export interface MarginRequirement {
     requiredMargin: number;
     availableMargin: number;
     sufficient: boolean;
+    isHedged?: boolean; // New field to indicate hedge benefit
 }
 
 export interface AccountSummary {
@@ -181,6 +182,8 @@ export const getInstrumentDetails = (symbol: string, segment: string) => {
 // STORE INTERFACE
 // ============================================
 
+export type FeedStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
+
 interface TradingStore {
     // Watchlist
     watchlist: WatchlistItem[];
@@ -213,9 +216,11 @@ interface TradingStore {
 
     // Broker Connection
     isConnected: boolean;
+    feedStatus: FeedStatus;
     brokerCredentials: { clientId: string; accessToken: string } | null;
     connectBroker: (clientId: string, accessToken: string) => void;
     disconnectBroker: () => void;
+    setFeedStatus: (status: FeedStatus) => void;
 
     // Utilities
     reset: () => void;
@@ -388,6 +393,7 @@ export const useTradingStore = create<TradingStore>()(
             dailyStats: [],
             account: initialAccount,
             isConnected: false,
+            feedStatus: 'DISCONNECTED',
             brokerCredentials: null,
             lastSettlementDate: '1970-01-01', // Force settlement on first run
 
@@ -410,69 +416,63 @@ export const useTradingStore = create<TradingStore>()(
 
             updateWatchlistPrices: (updates) => {
                 set((state) => {
-                    const updatedWatchlist = state.watchlist.map(item => {
-                        const update = updates.find(u => u.securityId === item.securityId);
-                        if (!update) return item;
+                    const priceMap = new Map<string, number>();
 
-                        const newLtp = update.ltp ?? item.ltp;
-                        const prevClose = update.prevClose ?? item.prevClose ?? newLtp;
-                        const change = newLtp - prevClose;
-                        const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+                    // 1. Update Watchlist
+                    const newWatchlist = state.watchlist.map(item => {
+                        const update = updates.find(u => String(u.securityId) === String(item.securityId));
+                        if (update && update.ltp) {
+                            priceMap.set(String(item.securityId), update.ltp);
+                            const newLtp = update.ltp;
+                            const prevClose = update.prevClose || item.prevClose || newLtp;
+                            const change = newLtp - prevClose;
+                            const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
 
-                        // Also update position if exists
-                        const position = state.positions.find(p => p.securityId === item.securityId);
-                        if (position && position.quantity !== 0) {
-                            // This is synchronous update loop, but we should use get().updatePosition() ideally
-                            // However, since we are inside set(), we can't call get().updatePosition() which calls set().
-                            // So we rely on a separate loop or integrated logic.
-                            // For now, let's assume updateWatchlistPrices is INTENDED to update positions too, if not, where is it?
+                            return {
+                                ...item,
+                                ...update,
+                                ltp: newLtp,
+                                change,
+                                changePercent,
+                                prevClose
+                            };
                         }
-
-                        return {
-                            ...item,
-                            ...update,
-                            ltp: newLtp,
-                            change,
-                            changePercent,
-                            prevClose
-                        };
+                        return item;
                     });
 
-                    // Actually, we must update POSITIONS here too or in a separate loop
-                    // Let's do it here to ensure sync
-                    const updatedPositions = state.positions.map(pos => {
-                        const update = updates.find(u => u.securityId === pos.securityId);
-                        if (!update) return pos;
+                    // 2. Update Positions (Live MTM)
+                    const newPositions = state.positions.map(pos => {
+                        const ltp = priceMap.get(String(pos.securityId)) ||
+                            updates.find(u => String(u.securityId) === String(pos.securityId))?.ltp;
 
-                        // IF CLOSED, DO NOT UPDATE
-                        if (pos.quantity === 0) return pos;
+                        if (!ltp) return pos;
 
-                        const newLtp = update.ltp || pos.ltp;
+                        // IF POSITION IS CLOSED, UPDATE LTP BUT NOT P&L
+                        if (pos.quantity === 0) {
+                            return { ...pos, ltp };
+                        }
+
                         const unrealizedPnl = pos.quantity > 0
-                            ? (newLtp - pos.avgBuyPrice) * pos.quantity
-                            : (pos.avgSellPrice - newLtp) * Math.abs(pos.quantity);
+                            ? (ltp - pos.avgBuyPrice) * pos.quantity
+                            : (pos.avgSellPrice - ltp) * Math.abs(pos.quantity);
 
                         return {
                             ...pos,
-                            ltp: newLtp,
+                            ltp,
                             unrealizedPnl,
-                            totalPnl: pos.realizedPnl + unrealizedPnl
+                            totalPnl: (pos.realizedPnl || 0) + unrealizedPnl
                         };
                     });
 
-                    return { watchlist: updatedWatchlist, positions: updatedPositions };
+                    return {
+                        watchlist: newWatchlist,
+                        positions: newPositions
+                    };
                 });
 
-                // Trigger global account summary update if needed, but doing it on every tick is expensive.
-                // Optimally throttled or reactive.
-                // For now, let's leave account summary to specific events or simple reactivity.
-                // Actually, P&L changes affect account summary (totalPnl). 
-                // We should update account summary here? 
-                // Yes, otherwise Total P&L header won't update.
-                get().updateAccountSummary(); // Call explicitly after state update
-
-                // Check and trigger SL orders
+                // Trigger SL check and account summary update
                 get().checkAndTriggerSLOrders();
+                get().updateAccountSummary();
             },
 
             reorderWatchlist: (items) => {
@@ -714,9 +714,10 @@ export const useTradingStore = create<TradingStore>()(
                     positions: state.positions.map(pos => {
                         if (pos.securityId !== securityId) return pos;
 
-                        // IF POSITION IS CLOSED, DON'T UPDATE LIVE P&L or LTP
-                        // This keeps the P&L fixed at the exit price
-                        if (pos.quantity === 0) return pos;
+                        // IF POSITION IS CLOSED, UPDATE LTP BUT NOT P&L (P&L is fixed at exit)
+                        if (pos.quantity === 0) {
+                            return { ...pos, ltp };
+                        }
 
                         const unrealizedPnl = pos.quantity > 0
                             ? (ltp - pos.avgBuyPrice) * pos.quantity
@@ -875,7 +876,22 @@ export const useTradingStore = create<TradingStore>()(
                             // NRML: 20% of Notional + Premium? No, Margin covers risk.
                             // Simply 18% of Notional is a good approximation for SPAN+Exposure.
 
-                            const baseMargin = notionalValue * 0.18; // 18% approx
+                            const rootSymbol = order.symbol.split(' ')[0];
+                            const isIndex = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX'].includes(rootSymbol);
+                            const marginPercent = isIndex ? 0.18 : 0.25;
+
+                            let baseMargin = notionalValue * marginPercent;
+
+                            // HEDGE BENEFIT CHECK
+                            const hasHedge = positions.some(p =>
+                                p.quantity > 0 &&
+                                p.symbol.startsWith(rootSymbol) &&
+                                (p.segment.includes('FNO') || p.segment.includes('NFO') || p.segment.includes('BFO'))
+                            );
+
+                            if (hasHedge) {
+                                baseMargin = baseMargin * 0.25; // 75% reduction
+                            }
 
                             if (order.productType === 'MIS') {
                                 requiredMargin = baseMargin * 0.5;
@@ -899,6 +915,14 @@ export const useTradingStore = create<TradingStore>()(
                     }
                 }
 
+                // Determine isHedged for return
+                const rootSymbol = order.symbol.split(' ')[0];
+                const isHedged = (instrumentDetails.isOptions && order.side === 'SELL') ? positions.some(p =>
+                    p.quantity > 0 &&
+                    p.symbol.startsWith(rootSymbol) &&
+                    (p.segment.includes('FNO') || p.segment.includes('NFO') || p.segment.includes('BFO'))
+                ) : false;
+
                 return {
                     securityId: order.securityId,
                     symbol: order.symbol,
@@ -908,7 +932,8 @@ export const useTradingStore = create<TradingStore>()(
                     price: order.price,
                     requiredMargin,
                     availableMargin: account.availableMargin,
-                    sufficient: account.availableMargin >= requiredMargin
+                    sufficient: account.availableMargin >= requiredMargin,
+                    isHedged
                 };
             },
 
@@ -1011,15 +1036,21 @@ export const useTradingStore = create<TradingStore>()(
             connectBroker: (clientId, accessToken) => {
                 set({
                     isConnected: true,
-                    brokerCredentials: { clientId, accessToken }
+                    brokerCredentials: { clientId, accessToken },
+                    feedStatus: 'CONNECTING'
                 });
             },
 
             disconnectBroker: () => {
                 set({
                     isConnected: false,
-                    brokerCredentials: null
+                    brokerCredentials: null,
+                    feedStatus: 'DISCONNECTED'
                 });
+            },
+
+            setFeedStatus: (status) => {
+                set({ feedStatus: status });
             },
 
             // ============================================

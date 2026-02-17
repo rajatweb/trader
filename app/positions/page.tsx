@@ -129,7 +129,7 @@ export default function PositionsPage() {
                                                     </div>
                                                 </td>
                                                 <td className="px-3 py-3 text-right text-gray-600">{avgPrice.toFixed(2)}</td>
-                                                <td className={`px-3 py-3 text-right ${pos.quantity === 0 ? 'text-gray-400' : 'text-gray-900'}`}>{pos.ltp.toFixed(2)}</td>
+                                                <td className={`px-3 py-3 text-right ${pos.quantity === 0 ? 'text-gray-500 font-medium' : 'text-gray-900'}`}>{pos.ltp.toFixed(2)}</td>
                                                 <td className={`px-3 py-3 text-right font-medium ${pos.quantity === 0 ? 'text-gray-400' : (pos.totalPnl >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]')}`}>
                                                     {pos.totalPnl >= 0 ? '+' : ''}{pos.totalPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>

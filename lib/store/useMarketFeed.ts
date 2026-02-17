@@ -15,7 +15,8 @@ export function useMarketFeed() {
         updateWatchlistPrices,
         getPendingOrders,
         updateOrderStatus,
-        checkAutoSquareOff
+        checkAutoSquareOff,
+        setFeedStatus
     } = useTradingStore();
 
     // Periodic check for auto square-off (every 30 seconds)
@@ -43,7 +44,8 @@ export function useMarketFeed() {
             clientId,
             accessToken,
             handleMarketUpdates,
-            handleError
+            handleError,
+            (status) => setFeedStatus(status)
         );
 
         client.connect();

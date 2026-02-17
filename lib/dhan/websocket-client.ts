@@ -14,12 +14,20 @@ export class DhanFeedClient {
     private reconnectTimeout: NodeJS.Timeout | null = null;
     private isManualDisconnect = false;
     private onError?: (error: string) => void;
+    private onStatusChange?: (status: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR') => void;
 
-    constructor(clientId: string, accessToken: string, onUpdate: OnUpdateCallback, onError?: (error: string) => void) {
+    constructor(
+        clientId: string,
+        accessToken: string,
+        onUpdate: OnUpdateCallback,
+        onError?: (error: string) => void,
+        onStatusChange?: (status: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR') => void
+    ) {
         this.clientId = (clientId || '').toString().trim();
         this.accessToken = (accessToken || '').trim();
         this.onUpdate = onUpdate;
         this.onError = onError;
+        this.onStatusChange = onStatusChange;
     }
 
     connect() {
@@ -37,11 +45,13 @@ export class DhanFeedClient {
         const url = `wss://api-feed.dhan.co?version=2&token=${encodeURIComponent(this.accessToken)}&clientId=${encodeURIComponent(this.clientId)}&authType=2`;
 
         try {
+            if (this.onStatusChange) this.onStatusChange('CONNECTING');
             this.socket = new WebSocket(url);
             this.socket.binaryType = 'arraybuffer';
 
             this.socket.onopen = () => {
                 console.log('Dhan Feed WebSocket Connected');
+                if (this.onStatusChange) this.onStatusChange('CONNECTED');
                 this.reconnectAttempts = 0;
                 this.resubscribe();
             };
@@ -68,14 +78,20 @@ export class DhanFeedClient {
             this.socket.onerror = (error) => {
                 // onerror usually doesn't have details, but we log it
                 console.error('Dhan Feed WebSocket Error');
+                if (this.onStatusChange) this.onStatusChange('ERROR');
             };
 
             this.socket.onclose = (event) => {
                 // Ignore code 1000 (normal closure) if disconnected manually
-                if (this.isManualDisconnect) return;
+                if (this.isManualDisconnect) {
+                    if (this.onStatusChange) this.onStatusChange('DISCONNECTED');
+                    return;
+                }
 
                 const reason = event.reason || (event.code === 1006 ? 'Abnormal Closure (Check Token/IP Block)' : 'Unknown');
                 console.warn(`Dhan Feed WebSocket Closed (Code: ${event.code}, Reason: ${reason})`);
+
+                if (this.onStatusChange) this.onStatusChange('DISCONNECTED');
 
                 if (event.code === 4001) {
                     const msg = 'Invalid Token (Code 4001). Please re-connect broker.';
