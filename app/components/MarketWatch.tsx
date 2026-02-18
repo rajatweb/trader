@@ -229,65 +229,69 @@ function WatchlistItemRow({ item, handleOpenModal }: {
     const isPositive = item.change >= 0;
 
     return (
-        <div
-            className="group flex justify-between items-center px-4 py-3.5 border-b border-[#f3f3f3] hover:bg-[#fbfbfb] cursor-grab active:cursor-grabbing transition-colors relative bg-white"
-        >
-            {/* Hover Actions Overlay */}
-            <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white shadow-sm border border-[#eee] rounded overflow-hidden z-10">
-                <button
-                    onClick={(e) => { e.stopPropagation(); handleOpenModal('Buy', item); }}
-                    className="bg-[#4184f3] text-white w-8 h-7 flex items-center justify-center text-[11px] font-bold hover:bg-blue-600 transition"
-                >
-                    B
-                </button>
-                <button
-                    onClick={(e) => { e.stopPropagation(); handleOpenModal('Sell', item); }}
-                    className="bg-[#ff5722] text-white w-8 h-7 flex items-center justify-center text-[11px] font-bold hover:bg-red-600 transition"
-                >
-                    S
-                </button>
-                <button className="text-[#666] w-7 h-7 flex items-center justify-center hover:bg-gray-100 border-l border-[#eee] transition"><MoreHorizontal size={14} /></button>
-                <button
-                    className="text-[#666] w-7 h-7 flex items-center justify-center hover:text-red-500 hover:bg-gray-100 border-l border-[#eee] transition"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        removeFromWatchlist(item.securityId);
-                    }}
-                >
-                    <Trash2 size={14} />
-                </button>
-            </div>
+        <div className="group relative flex justify-between items-center px-4 py-3.5 border-b border-[#f3f3f3] hover:bg-[#fbfbfb] cursor-grab active:cursor-grabbing transition-colors bg-white">
 
             {/* Symbol Info */}
-            <div className="flex flex-col gap-0.5 group-hover:opacity-20 transition-opacity duration-200 pointer-events-none">
+            <div className="flex flex-col gap-0.5">
                 <span className={`text-[13px] font-medium leading-none ${item.isIndex ? 'text-[#333] font-bold' : (item.change < 0 ? 'text-[#d43725]' : 'text-[#333]')}`}>
                     {item.symbol}
                 </span>
-                <div className="flex items-center gap-1">
-                    <span className="text-[10px] text-[#9b9b9b] uppercase font-bold tracking-wider">{item.exchange}</span>
+                <div className="flex items-center gap-1 text-[10px] text-[#9b9b9b]">
+                    <span className="uppercase font-bold tracking-wider">{item.exchange}</span>
                     {!item.isIndex && <span className="w-1 h-1 rounded-full bg-[#ccc]"></span>}
                 </div>
             </div>
 
             {/* Price Info */}
-            <div className={`flex gap-3 items-center group-hover:opacity-20 transition-opacity duration-200 pointer-events-none`}>
-                <div className="flex flex-col items-end gap-0.5">
-                    <span className={`text-[11px] font-medium ${item.change >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                        {item.change.toFixed(2)}
+            <div className="flex gap-3 items-center">
+                <div className="flex flex-col items-end gap-0.5 w-[72px]"> {/* Fixed width for stability */}
+                    <span className={`text-[11px] font-medium tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                        {item.change > 0 ? '+' : ''}{item.change.toFixed(2)}
                     </span>
-                    <span className={`text-[10px] opacity-80 ${item.change >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                    <span className={`text-[10px] opacity-80 tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
                         {item.changePercent.toFixed(2)}%
                     </span>
                 </div>
 
-                <span className={`text-[13px] font-semibold tracking-wide w-20 text-right ${item.change >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                <span className={`text-[13px] font-semibold tracking-wide w-20 text-right tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
                     {item.ltp.toFixed(2)}
                 </span>
 
-                <div className="w-2 flex justify-center">
+                <div className="w-4 flex justify-center">
                     {isPositive ? <TrendingUp size={12} className="text-[#26a69a]" strokeWidth={2.5} /> : <TrendingDown size={12} className="text-[#d43725]" strokeWidth={2.5} />}
                 </div>
             </div>
+
+            {/* Hover Actions Overlay - Absolute positioned over the whole row but only visible on hover */}
+            <div className="absolute inset-0 bg-[#fbfbfb] bg-opacity-95 flex items-center justify-end px-4 gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-10 pointer-events-none group-hover:pointer-events-auto">
+                <div className="flex gap-1 items-center">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleOpenModal('Buy', item); }}
+                        className="bg-[#4184f3] text-white px-3 py-1.5 rounded text-[11px] font-bold hover:bg-blue-600 transition shadow-sm"
+                    >
+                        B
+                    </button>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleOpenModal('Sell', item); }}
+                        className="bg-[#ff5722] text-white px-3 py-1.5 rounded text-[11px] font-bold hover:bg-red-600 transition shadow-sm"
+                    >
+                        S
+                    </button>
+                    <button className="text-[#666] p-1.5 hover:bg-gray-200 rounded transition border border-transparent hover:border-gray-300 ml-1">
+                        <MoreHorizontal size={16} />
+                    </button>
+                    <button
+                        className="text-[#666] p-1.5 hover:text-red-500 hover:bg-red-50 rounded transition border border-transparent hover:border-red-100 ml-1"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            removeFromWatchlist(item.securityId);
+                        }}
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                </div>
+            </div>
+
         </div>
     );
 }

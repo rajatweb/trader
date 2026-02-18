@@ -39,9 +39,10 @@ export default function OrderModal({
 }: OrderModalProps) {
     const { placeOrder, calculateMargin, account, watchlist, cancelOrder, getInstrumentDetails } = useTradingStore();
 
-    const [tab, setTab] = useState('Regular');
-    const [product, setProduct] = useState('INTRADAY');
-    const [orderType, setOrderType] = useState('MARKET');
+    // State
+    const [side, setSide] = useState(type);
+    const [product, setProduct] = useState<ProductType>('MIS');
+    const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT' | 'SL' | 'SL-M'>('MARKET');
     const [qty, setQty] = useState(1);
     const [limitPrice, setLimitPrice] = useState(price);
     const [triggerPrice, setTriggerPrice] = useState(0);
@@ -53,33 +54,6 @@ export default function OrderModal({
     useEffect(() => {
         setMounted(true);
     }, []);
-
-    // Update limit price when modal opens or price changes
-    useEffect(() => {
-        if (isOpen) {
-            setLimitPrice(Number(price.toFixed(2)));
-            setError('');
-
-            // Pre-fill SL order details if provided
-            if (prefilledOrderType) {
-                setOrderType(prefilledOrderType);
-            } else {
-                setOrderType('MARKET');
-            }
-
-            if (prefilledQuantity) {
-                setQty(prefilledQuantity);
-            } else {
-                setQty(1);
-            }
-
-            if (prefilledTriggerPrice) {
-                setTriggerPrice(Number(prefilledTriggerPrice.toFixed(2)));
-            } else {
-                setTriggerPrice(0);
-            }
-        }
-    }, [isOpen, price, prefilledOrderType, prefilledQuantity, prefilledTriggerPrice]);
 
     // Find instrument details from watchlist
     const instrument = watchlist.find(w => w.symbol === symbol);
@@ -93,337 +67,340 @@ export default function OrderModal({
     // Get instrument details including lot size
     const instrumentInfo = getInstrumentDetails(symbol, finalSegment);
     const lotSize = instrumentInfo.lotSize;
-    const totalQuantity = instrumentInfo.isEquity ? qty : qty * lotSize;
 
     // Detect segment type for validation
     const isEquity = finalSegment.includes('_EQ') || finalSegment === 'NSE_EQ' || finalSegment === 'BSE_EQ';
     const isOptions = finalSegment.includes('_FNO') || finalSegment.includes('NFO') || finalSegment.includes('BFO');
 
-    // Get available product types based on segment and side
+    useEffect(() => {
+        if (isOpen) {
+            setSide(type); // Reset to prop when opened
+            setLimitPrice(Number(price.toFixed(2)));
+            setError('');
+            if (prefilledOrderType) setOrderType(prefilledOrderType);
+            else setOrderType('MARKET');
+
+            if (prefilledQuantity) setQty(prefilledQuantity);
+            else setQty(1);
+
+            if (prefilledTriggerPrice) setTriggerPrice(Number(prefilledTriggerPrice.toFixed(2)));
+            else setTriggerPrice(0);
+        }
+    }, [isOpen, price, type, prefilledOrderType, prefilledQuantity, prefilledTriggerPrice]);
+
+    // Use side instead of type for logic
+    const isBuy = side === 'Buy';
+
+
+    // ... existing logic ...
+
+    // Get available products based on SIDE
     const getAvailableProducts = (): ProductType[] => {
         if (isEquity) {
-            if (type === 'Sell') {
-                // Equity SELL: Only MIS (no CNC short selling)
+            if (side === 'Sell') { // Changed from type
                 return ['MIS'];
             } else {
-                // Equity BUY: CNC and MIS
                 return ['CNC', 'MIS'];
             }
         } else if (isOptions) {
-            // Options: MIS and NRML (no CNC for F&O)
             return ['MIS', 'NRML'];
         } else {
-            // Futures/Commodity: MIS and NRML
             return ['MIS', 'NRML'];
         }
     };
 
     const availableProducts = getAvailableProducts();
 
-    // Validate and adjust product if current selection is invalid
-    useEffect(() => {
-        if (!availableProducts.includes(product as any)) {
-            setProduct(availableProducts[0] as any);
-        }
-    }, [type, finalSegment]);
-
     if (!isOpen || !mounted) return null;
 
-    const isBuy = type === 'Buy';
-
     return createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-24 font-sans pointer-events-none">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center font-sans pointer-events-none">
             {/* Backdrop */}
-            <div className="fixed inset-0 bg-black/20 pointer-events-auto" onClick={onClose} />
+            <div className="fixed inset-0 bg-black/40 pointer-events-auto transition-opacity" onClick={onClose} />
 
             {/* Draggable Modal */}
             <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -20 }}
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -20 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
                 drag
                 dragControls={dragControls}
                 dragMomentum={false}
                 dragListener={false}
-                className="bg-white w-[95%] sm:w-[500px] md:w-[600px] rounded-lg shadow-xl overflow-hidden font-sans relative z-10 pointer-events-auto cursor-default text-[#444] mb-10"
+                className="bg-white w-[95%] sm:w-[480px] rounded-xl shadow-2xl overflow-hidden font-sans relative z-10 pointer-events-auto cursor-default text-slate-800 flex flex-col max-h-[90vh]"
                 onClick={e => e.stopPropagation()}
             >
 
-                {/* Header */}
+                {/* Header with Toggle */}
                 <div
-                    className={`px-6 py-4 flex justify-between items-start ${isBuy ? 'bg-[#4184f3]' : 'bg-[#ff5722]'} text-white cursor-grab active:cursor-grabbing`}
+                    className={`px-6 py-5 flex justify-between items-center ${isBuy ? 'bg-blue-600' : 'bg-red-500'} text-white transition-colors duration-300 cursor-grab active:cursor-grabbing`}
                     onPointerDown={(e) => {
                         dragControls.start(e);
                     }}
                 >
-                    <div>
-                        <h2 className="text-base font-semibold tracking-wide mb-1">{symbol}</h2>
-                        <div className="text-xs opacity-90 flex items-center gap-1">
-                            <span className="opacity-80">NFO</span>
-                            <span className="font-medium text-sm">₹{livePrice.toFixed(2)}</span>
+                    <div className="flex flex-col">
+                        <h2 className="text-lg font-bold tracking-tight">{symbol}</h2>
+                        <div className="text-xs opacity-90 flex items-center gap-2 mt-1">
+                            <span className="bg-white/20 px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide">{finalSegment.split('_')[1] || 'EQ'}</span>
+                            <span className="font-mono text-sm">₹{livePrice.toFixed(2)}</span>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-9 h-5 bg-black/20 rounded-full relative cursor-pointer">
-                            <div className="w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 right-0.5 shadow-sm"></div>
-                        </div>
-                        <button onClick={onClose} className="p-1 hover:bg-black/10 rounded"><X size={18} /></button>
-                    </div>
-                </div>
 
-                {/* Tabs */}
-                {/* ... existing tabs code ... */}
-                <div className="flex items-center justify-between border-b border-gray-200 bg-white px-2">
-                    <div className="flex text-[13px] font-medium text-gray-500 overflow-x-auto">
-                        {['Quick', 'Regular', 'Iceberg'].map(v => (
-                            <button
-                                key={v}
-                                onClick={() => setTab(v)}
-                                className={`px-5 py-3 relative transition-colors whitespace-nowrap hover:text-[#4184f3] ${tab === v ? 'text-[#4184f3]' : ''}`}
-                            >
-                                {v}
-                                {tab === v && <div className={`absolute bottom-0 left-0 w-full h-[2px] ${isBuy ? 'bg-[#4184f3]' : 'bg-[#ff5722]'}`}></div>}
-                            </button>
-                        ))}
+                    {/* Buy/Sell Toggle */}
+                    <div className="bg-black/20 p-1 rounded-lg flex items-center gap-1 backdrop-blur-sm">
+                        <button
+                            onClick={() => setSide('Buy')}
+                            className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${side === 'Buy' ? 'bg-white text-blue-600 shadow-sm' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                        >
+                            Buy
+                        </button>
+                        <button
+                            onClick={() => setSide('Sell')}
+                            className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${side === 'Sell' ? 'bg-white text-red-500 shadow-sm' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                        >
+                            Sell
+                        </button>
                     </div>
+
+                    <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full transition-colors ml-2"><X size={20} /></button>
                 </div>
 
                 {/* Body */}
-                <div className="p-4 md:p-6">
+                <div className="p-6 flex-1 overflow-y-auto">
 
-                    {/* Product Selection */}
-                    <div className="flex flex-wrap items-center justify-between mb-8 text-[13px] gap-4">
-                        <div className="flex gap-4 md:gap-8 flex-wrap">
-                            {availableProducts.map((prod) => {
-                                const productLabels: Record<string, { name: string; code: string }> = {
-                                    'CNC': { name: 'Delivery', code: 'CNC' },
-                                    'MIS': { name: 'Intraday', code: 'MIS' },
-                                    'NRML': { name: 'Normal', code: 'NRML' }
-                                };
+                    {/* Top Row: Product & Tabs */}
+                    <div className="flex items-center justify-between mb-6">
+                        <div className="flex bg-gray-100 p-1 rounded-lg">
+                            {availableProducts.map((prod) => (
+                                <button
+                                    key={prod}
+                                    onClick={() => setProduct(prod as any)}
+                                    className={`px-3 py-1.5 text-[11px] font-bold rounded-md transition-all ${product === prod ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    {prod === 'CNC' ? 'Delivery' : prod === 'MIS' ? 'Intraday' : 'Normal'}
+                                </button>
+                            ))}
+                        </div>
 
-                                const label = productLabels[prod];
-
-                                return (
-                                    <label key={prod} className="flex items-center gap-2 cursor-pointer group">
-                                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${product === prod ? (isBuy ? 'border-[#4184f3]' : 'border-[#ff5722]') : 'border-gray-300 group-hover:border-gray-400'}`}>
-                                            {product === prod && <div className={`w-2.5 h-2.5 rounded-full ${isBuy ? 'bg-[#4184f3]' : 'bg-[#ff5722]'}`}></div>}
-                                        </div>
-                                        <input type="radio" className="hidden" checked={product === prod} onChange={() => setProduct(prod)} />
-                                        <span className={product === prod ? 'text-gray-800' : 'text-gray-600'}>
-                                            {label.name} <span className="text-gray-400">{label.code}</span>
-                                        </span>
-                                    </label>
-                                );
-                            })}
+                        <div className="flex gap-2 text-[11px] font-medium text-blue-600 cursor-pointer hover:underline items-center">
+                            <Layers size={14} />
+                            <span>Market Depth</span>
                         </div>
                     </div>
 
-                    {/* Inputs Row */}
-                    <div className="flex flex-col md:flex-row gap-4 mb-2">
-                        {/* Qty Input */}
-                        <div className="w-full md:w-[140px]">
-                            <div className="relative border border-gray-300 rounded bg-white hover:border-gray-400 transition-colors">
-                                <label className="absolute top-2 left-3 text-[11px] text-gray-400 font-medium">Qty.</label>
+                    {/* Main Inputs Grid */}
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+
+                        {/* Quantity */}
+                        <div className="col-span-1">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Quantity ({instrumentInfo.isEquity ? 'Qty' : 'Lots'})</label>
+                            <div className="relative group">
                                 <input
                                     type="number"
+                                    min="1"
                                     value={qty}
                                     onChange={(e) => setQty(Number(e.target.value))}
-                                    className="w-full h-[58px] pt-5 pl-3 pr-10 bg-transparent text-lg text-[#333] focus:outline-none focus:ring-1 focus:ring-[#4184f3] rounded"
+                                    className="w-full bg-gray-50 border border-gray-200 text-slate-800 text-lg font-semibold rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all hover:border-gray-300"
                                 />
-                                <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">
-                                    <Layers size={16} />
-                                </div>
+                                {!instrumentInfo.isEquity && (
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium bg-gray-100 px-1.5 py-0.5 rounded">
+                                        {qty * lotSize} Qty
+                                    </span>
+                                )}
                             </div>
                         </div>
 
-                        {/* Price Input - Show for LIMIT and SL, hide for MARKET and SL-M */}
-                        {(orderType === 'LIMIT' || orderType === 'SL') && (
-                            <div className="flex-1">
-                                <div className="relative border border-gray-300 rounded bg-white hover:border-gray-400 transition-colors">
-                                    <label className="absolute top-2 left-3 text-[11px] text-gray-400 font-medium">Price</label>
-                                    <input
-                                        type="number"
-                                        step="0.05"
-                                        value={limitPrice}
-                                        onChange={(e) => setLimitPrice(Number(e.target.value))}
-                                        className="w-full h-[58px] pt-5 pl-3 bg-transparent text-lg text-[#333] focus:outline-none focus:ring-1 focus:ring-[#4184f3] rounded"
-                                        placeholder="0.00"
-                                    />
-                                </div>
+                        {/* Price */}
+                        <div className="col-span-1">
+                            <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Price</label>
+                            <div className="relative">
+                                <input
+                                    type="number"
+                                    disabled={orderType === 'MARKET' || orderType === 'SL-M'}
+                                    value={orderType === 'MARKET' || orderType === 'SL-M' ? 0 : limitPrice}
+                                    onChange={(e) => setLimitPrice(Number(e.target.value))}
+                                    placeholder={orderType === 'MARKET' ? "Market Price" : "0.00"}
+                                    className={`w-full border text-lg font-semibold rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all 
+                                        ${orderType === 'MARKET' || orderType === 'SL-M'
+                                            ? 'bg-gray-100 border-transparent text-gray-400 cursor-not-allowed placeholder-gray-400'
+                                            : 'bg-gray-50 border-gray-200 text-slate-800 hover:border-gray-300'}`}
+                                />
+                                {(orderType === 'MARKET' || orderType === 'SL-M') && (
+                                    <div className="absolute inset-0 flex items-center px-3 text-gray-400 text-sm font-medium pointer-events-none">
+                                        Market
+                                    </div>
+                                )}
                             </div>
-                        )}
+                        </div>
 
-                        {/* Trigger Input - Show for SL and SL-M only */}
+                        {/* Trigger Price (Conditional) */}
                         {(orderType === 'SL' || orderType === 'SL-M') && (
-                            <div className="flex-1">
-                                <div className="relative border border-gray-300 rounded bg-white hover:border-gray-400 transition-colors">
-                                    <label className="absolute top-2 left-3 text-[11px] text-gray-400 font-medium">Trigger price</label>
-                                    <input
-                                        type="number"
-                                        step="0.05"
-                                        value={triggerPrice}
-                                        onChange={(e) => setTriggerPrice(Number(e.target.value))}
-                                        className="w-full h-[58px] pt-5 pl-3 bg-transparent text-lg text-[#333] focus:outline-none focus:ring-1 focus:ring-[#4184f3] rounded"
-                                        placeholder="0.00"
-                                    />
-                                </div>
+                            <div className="col-span-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Trigger Price</label>
+                                <input
+                                    type="number"
+                                    value={triggerPrice}
+                                    onChange={(e) => setTriggerPrice(Number(e.target.value))}
+                                    className="w-full bg-gray-50 border border-gray-200 text-slate-800 text-lg font-semibold rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all hover:border-gray-300"
+                                />
                             </div>
                         )}
                     </div>
 
-                    {/* Order Type Selection */}
-                    <div className="flex flex-wrap items-center justify-between mb-2 mt-6 text-[13px] gap-4">
-                        <div className="flex gap-6">
-                            {['MARKET', 'LIMIT'].map(ot => (
-                                <label key={ot} className="flex items-center gap-2 cursor-pointer group">
-                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${orderType === ot ? (isBuy ? 'border-[#4184f3]' : 'border-[#ff5722]') : 'border-gray-300 group-hover:border-gray-400'}`}>
-                                        {orderType === ot && <div className={`w-2.5 h-2.5 rounded-full ${isBuy ? 'bg-[#4184f3]' : 'bg-[#ff5722]'}`}></div>}
-                                    </div>
-                                    <input type="radio" className="hidden" checked={orderType === ot} onChange={() => setOrderType(ot)} />
-                                    <span className={orderType === ot ? 'text-gray-800' : 'text-gray-600'}>{ot === 'MARKET' ? 'Market' : 'Limit'}</span>
-                                </label>
+                    {/* Order Type Selector */}
+                    <div className="mb-6">
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Order Type</label>
+                        <div className="grid grid-cols-4 gap-2">
+                            {['MARKET', 'LIMIT', 'SL', 'SL-M'].map(ot => (
+                                <button
+                                    key={ot}
+                                    onClick={() => setOrderType(ot as any)}
+                                    className={`py-2 rounded-lg text-xs font-bold border transition-all 
+                                        ${orderType === ot
+                                            ? (isBuy ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-red-50 border-red-200 text-red-700')
+                                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    {ot}
+                                </button>
                             ))}
                         </div>
-                        <div className="flex gap-6">
-                            {['SL', 'SL-M'].map(ot => (
-                                <label key={ot} className="flex items-center gap-2 cursor-pointer group">
-                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${orderType === ot ? (isBuy ? 'border-[#4184f3]' : 'border-[#ff5722]') : 'border-gray-300 group-hover:border-gray-400'}`}>
-                                        {orderType === ot && <div className={`w-2.5 h-2.5 rounded-full ${isBuy ? 'bg-[#4184f3]' : 'bg-[#ff5722]'}`}></div>}
-                                    </div>
-                                    <input type="radio" className="hidden" checked={orderType === ot} onChange={() => setOrderType(ot)} />
-                                    <span className={orderType === ot ? 'text-gray-800' : 'text-gray-600'}>{ot}</span>
-                                </label>
-                            ))}
+                    </div>
+
+                    {/* Margin & Charges Info */}
+                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-100 flex items-center justify-between">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Required Margin</span>
+                            <span className={`text-base font-bold ${isBuy ? 'text-blue-600' : 'text-red-500'}`}>
+                                ₹{(() => {
+                                    const orderData = {
+                                        securityId: finalSecurityId,
+                                        symbol,
+                                        segment: finalSegment,
+                                        side: (isBuy ? 'BUY' : 'SELL') as any,
+                                        orderType: orderType as any,
+                                        productType: product as any,
+                                        quantity: qty,
+                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
+                                    };
+                                    // Safety check for calculation
+                                    try {
+                                        return calculateMargin(orderData as any).requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+                                    } catch (e) { return '0.00'; }
+                                })()}
+                            </span>
+                            <span className="text-[10px] text-gray-500 mt-1 font-medium">
+                                + ₹{(() => {
+                                    try {
+                                        const charges = useTradingStore.getState().getEstimatedCharges({
+                                            symbol,
+                                            segment: finalSegment,
+                                            productType: product,
+                                            orderType: orderType,
+                                            quantity: instrumentInfo.isEquity ? qty : qty * lotSize,
+                                            price: orderType === 'MARKET' ? livePrice : limitPrice,
+                                            side: (isBuy ? 'BUY' : 'SELL') as any,
+                                            exchange: finalExchange
+                                        });
+                                        return charges.total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+                                    } catch (e) { return '0.00'; }
+                                })()} Charges
+                            </span>
+                        </div>
+
+                        <div className="flex flex-col items-end">
+                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Available</span>
+                            <span className="text-sm font-semibold text-gray-700">₹{account.availableMargin.toLocaleString('en-IN', { maximumFractionDigits: 0, compactDisplay: 'short' })}</span>
                         </div>
                     </div>
 
                     {/* Error Message */}
                     {error && (
-                        <div className="mt-4 bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded text-sm">
+                        <div className="mt-4 bg-red-50 border border-red-100 text-red-600 px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2">
+                            <Info size={14} />
                             {error}
                         </div>
                     )}
 
                 </div>
 
-                {/* Footer */}
-                <div className="px-6 py-4 bg-[#fbfbfb] border-t border-gray-200 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div className="flex gap-4 md:gap-8 text-[13px] w-full md:w-auto justify-between md:justify-start">
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Margin</span>
-                            <span className={`text-base font-semibold ${isBuy ? 'text-[#4184f3]' : 'text-[#ff5722]'}`}>
-                                ₹{(() => {
-                                    const orderData = {
-                                        securityId: finalSecurityId,
-                                        symbol,
-                                        exchange: finalExchange as any,
-                                        segment: finalSegment,
-                                        side: (isBuy ? 'BUY' : 'SELL') as any,
-                                        orderType: orderType as any,
-                                        productType: product as any,
-                                        quantity: qty,
-                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
-                                        triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
-                                    };
-                                    const marginCheck = calculateMargin(orderData);
-                                    return marginCheck.requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-                                })()}
-                            </span>
-                        </div>
+                {/* Footer Actions */}
+                <div className="p-4 border-t border-gray-100 bg-gray-50/50 flex gap-3">
+                    <button
+                        onClick={async () => {
+                            if (!finalSecurityId) {
+                                setError('Invalid instrument');
+                                return;
+                            }
 
-                        <div className="flex flex-col group relative cursor-help">
-                            <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider border-b border-dotted border-gray-400">Charges</span>
-                            <span className="text-sm font-medium text-gray-600">
-                                ₹{(() => {
-                                    const charges = useTradingStore.getState().getEstimatedCharges({
-                                        symbol,
-                                        segment: finalSegment,
-                                        productType: product,
-                                        orderType: orderType,
-                                        quantity: instrumentInfo.isEquity ? qty : qty * lotSize,
-                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
-                                        side: (isBuy ? 'BUY' : 'SELL') as any,
-                                        exchange: finalExchange
-                                    });
-                                    return charges.total.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-                                })()}
-                            </span>
-                            {/* Tooltip ... */}
-                        </div>
+                            setIsPlacing(true);
+                            setError('');
 
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Avail.</span>
-                            <div className="flex items-center gap-1">
-                                <span className="text-sm font-medium text-gray-700">₹{account.availableMargin.toLocaleString('en-IN', { maximumFractionDigits: 0, compactDisplay: 'short' })}</span>
-                            </div>
-                        </div>
-                    </div>
+                            try {
+                                const orderData = {
+                                    securityId: finalSecurityId,
+                                    symbol,
+                                    exchange: finalExchange as any,
+                                    segment: finalSegment,
+                                    side: (isBuy ? 'BUY' : 'SELL') as any,
+                                    orderType: orderType as any,
+                                    productType: product as any,
+                                    quantity: instrumentInfo.isEquity ? qty : qty, // Pass raw quantity, store handles lot multiplication? 
+                                    // Wait, implementation says: "quantity: qty". But UI says "Lots" for F&O.
+                                    // Store expects "quantity" as LOTS for F&O in placeOrder?
+                                    // Checked store: placeOrder -> calculateMargin uses (order.quantity * lotSize) if F&O.
+                                    // So we shout pass LOTS if user input is lots.
+                                    // Yes, `qty` here IS lots for options.
+                                    price: orderType === 'MARKET' ? livePrice : limitPrice,
+                                    triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
+                                };
 
-                    <div className="flex gap-3 w-full md:w-auto">
-                        <button
-                            onClick={async () => {
-                                if (!finalSecurityId) {
-                                    setError('Invalid instrument');
+                                // Validate margin
+                                const marginCheck = calculateMargin(orderData);
+                                if (!marginCheck.sufficient) {
+                                    setError(`Insufficient margin! Need ₹${marginCheck.requiredMargin.toLocaleString()}`);
+                                    setIsPlacing(false);
                                     return;
                                 }
 
-                                setIsPlacing(true);
-                                setError('');
+                                if (existingOrderId) cancelOrder(existingOrderId);
 
-                                try {
-                                    const orderData = {
-                                        securityId: finalSecurityId,
-                                        symbol,
-                                        exchange: finalExchange as any,
-                                        segment: finalSegment,
-                                        side: (isBuy ? 'BUY' : 'SELL') as any,
-                                        orderType: orderType as any,
-                                        productType: product as any,
-                                        quantity: qty,
-                                        price: orderType === 'MARKET' ? livePrice : limitPrice,
-                                        triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
-                                    };
+                                const orderId = placeOrder(orderData);
+                                onClose();
 
-                                    // Validate margin
-                                    const marginCheck = calculateMargin(orderData);
-                                    if (!marginCheck.sufficient) {
-                                        setError(`Insufficient margin! Need ₹${marginCheck.requiredMargin.toLocaleString()}, have ₹${marginCheck.availableMargin.toLocaleString()}`);
-                                        setIsPlacing(false);
-                                        return;
-                                    }
+                                // Reset
+                                setQty(1);
+                                setLimitPrice(price);
+                                setTriggerPrice(0);
+                                setOrderType('MARKET');
+                            } catch (err: any) {
+                                setError(err.message || 'Failed to place order');
+                            } finally {
+                                setIsPlacing(false);
+                            }
+                        }}
+                        disabled={isPlacing}
+                        className={`flex-1 py-3.5 rounded-xl text-sm font-bold text-white shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed
+                            ${isBuy
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'
+                                : 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 shadow-red-500/20'
+                            }`}
+                    >
+                        {isPlacing ? 'Processing...' : (
+                            <div className="flex items-center justify-center gap-2">
+                                <span>{side} {symbol}</span>
+                                {existingOrderId && <span className="text-xs bg-white/20 px-1 rounded">MODIFY</span>}
+                            </div>
+                        )}
+                    </button>
 
-                                    // If modifying existing order, cancel it first
-                                    if (existingOrderId) {
-                                        cancelOrder(existingOrderId);
-                                    }
-
-                                    // Place order
-                                    const orderId = placeOrder(orderData);
-
-                                    // Close modal on success
-                                    onClose();
-
-                                    // Reset form
-                                    setQty(1);
-                                    setLimitPrice(price);
-                                    setTriggerPrice(0);
-                                    setOrderType('MARKET');
-                                    setProduct('MIS');
-                                } catch (err: any) {
-                                    setError(err.message || 'Failed to place order');
-                                } finally {
-                                    setIsPlacing(false);
-                                }
-                            }}
-                            disabled={isPlacing}
-                            className={`flex-1 md:flex-none px-8 py-2.5 rounded text-sm font-medium text-white shadow-sm transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${isBuy ? 'bg-[#4184f3] hover:bg-blue-600' : 'bg-[#ff5722] hover:bg-red-600'}`}
-                        >
-                            {isPlacing ? 'Placing...' : existingOrderId ? 'Modify Order' : type}
-                        </button>
-                        <button onClick={onClose} className="flex-1 md:flex-none px-6 py-2.5 rounded border border-gray-300 text-sm font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors">
-                            Cancel
-                        </button>
-                    </div>
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-3.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 hover:bg-white hover:text-gray-800 hover:border-gray-300 transition-all"
+                    >
+                        Cancel
+                    </button>
                 </div>
 
             </motion.div>

@@ -36,14 +36,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
             {/* Index Summary - Hidden on small mobile, visible on larger */}
             <div className="hidden sm:flex items-center gap-6 text-sm">
                 <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[#444]">NIFTY 50</span>
-                    <span className="text-emerald-500 font-medium">25682.75</span>
-                    <span className="text-[#9b9b9b] text-xs">211.65 (0.83%)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="font-bold text-[#444]">NIFTY BANK</span>
-                    <span className="text-emerald-500 font-medium">60945.10</span>
-                    <span className="text-[#9b9b9b] text-xs">762.45 (1.27%)</span>
+                    <span className="font-semibold text-[#444]">Paper trading</span>
                 </div>
             </div>
 

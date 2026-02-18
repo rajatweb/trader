@@ -1,6 +1,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { soundManager } from '../sound';
 
 // ============================================
 // TYPES & INTERFACES
@@ -575,6 +576,7 @@ export const useTradingStore = create<TradingStore>()(
                     newOrder.status = 'REJECTED';
                     newOrder.rejectionReason = 'Insufficient margin';
                     set((state) => ({ orders: [...state.orders, newOrder] }));
+                    soundManager.play('error'); // ERROR SOUND
                     return orderId;
                 }
 
@@ -597,6 +599,8 @@ export const useTradingStore = create<TradingStore>()(
                         };
                     });
                 }
+
+                soundManager.play('placed'); // PLACED SOUND
 
                 // For paper trading, execute market orders immediately
                 if (orderData.orderType === 'MARKET') {
@@ -738,6 +742,8 @@ export const useTradingStore = create<TradingStore>()(
                                 return;
                             }
                         }
+
+                        soundManager.play('sl_hit'); // SL HIT SOUND
 
                         // Execute the SL order
                         get().updateOrderStatus(
@@ -1140,6 +1146,7 @@ export const useTradingStore = create<TradingStore>()(
             // ============================================
             // INTERNAL HELPERS (not exposed in interface)
             executeOrder: (order: Order) => {
+                soundManager.play('success'); // EXECUTED SOUND
                 set((state) => {
                     const existingPosition = state.positions.find(p => p.securityId === order.securityId);
 
