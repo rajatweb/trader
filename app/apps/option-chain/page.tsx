@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { ArrowLeft, RefreshCw, BarChart2, Briefcase, ShoppingBag, Plus, Minus, Layers, CheckCircle2, ChevronDown, Filter, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -49,7 +49,7 @@ const formatExpiryDate = (dateStr: string): string => {
     }
 };
 
-export default function OptionChainPage() {
+function OptionChainContent() {
     const { basket, addToBasket, removeFromBasket, brokerCredentials, placeOrder } = useTradingStore();
     const searchParams = useSearchParams();
     const initialSymbol = searchParams.get('symbol')?.toUpperCase() || 'NIFTY';
@@ -289,130 +289,132 @@ export default function OptionChainPage() {
     };
 
     // Calculate Max OI for relative bar width
-    const maxOI = strikes.length > 0 ? Math.max(...strikes.flatMap(s => [s.call.oiRaw, s.put.oiRaw])) : 1;
+    const maxOI = Math.max(...strikes.flatMap(s => [s.call.oiRaw, s.put.oiRaw]), 1);
 
     return (
-        <div className="flex flex-col h-full bg-[#f8f9fa] text-[#333]">
+        <div className="bg-gray-50 min-h-screen text-[#333] font-sans pb-20">
             {/* Header */}
-            <div className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-30 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center">
-                <div className="flex items-center gap-4 w-full md:w-auto">
-                    <Link href="/apps" className="p-2 -ml-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors">
-                        <ArrowLeft size={20} />
-                    </Link>
-                    <div>
-                        <h1 className="font-bold text-lg text-gray-800 flex items-center gap-2">
-                            Option Chain
-                            <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">BETA</span>
-                        </h1>
-                        <p className="text-xs text-gray-500">Real-time Greeks & Analysis</p>
+            <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm">
+                <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <Link href="/apps" className="p-2 -ml-2 hover:bg-gray-100 rounded-full text-gray-600">
+                            <ArrowLeft size={20} />
+                        </Link>
+                        <h1 className="text-lg font-bold text-gray-800">Option Chain</h1>
                     </div>
-                </div>
 
-                {/* Filters */}
-                <div className="flex items-center gap-3 bg-gray-50 p-1 rounded-lg border border-gray-100">
-                    <select
-                        value={selectedSymbol}
-                        onChange={(e) => setSelectedSymbol(e.target.value)}
-                        className="bg-white text-sm font-semibold px-3 py-1.5 rounded shadow-sm border border-gray-200 focus:outline-none hover:border-blue-300 transition-colors cursor-pointer"
-                    >
-                        <option value="NIFTY">NIFTY</option>
-                        <option value="BANKNIFTY">BANKNIFTY</option>
-                        <option value="FINNIFTY">FINNIFTY</option>
-                        <option value="SENSEX">SENSEX</option>
-                        <option value="CRUDEOIL">CRUDEOIL</option>
-                        <option value="NATURALGAS">NATURALGAS</option>
+                    <div className="flex items-center gap-2">
+                        {/* Basket Mode Toggle */}
+                        <button
+                            onClick={() => setBasketMode(!basketMode)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${basketMode ? 'bg-black text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        >
+                            <Layers size={14} />
+                            {basketMode ? 'Basket Mode ON' : 'Basket Mode OFF'}
+                        </button>
 
-                    </select>
-
-                    <div className="w-px h-6 bg-gray-200 mx-1"></div>
-
-                    <select
-                        value={expiry}
-                        onChange={(e) => setExpiry(e.target.value)}
-                        className="bg-transparent text-sm font-medium px-2 py-1.5 focus:outline-none text-gray-600 cursor-pointer hover:text-black"
-                    >
-                        {expiryList.length > 0 ? (
-                            expiryList.map(exp => (
-                                <option key={exp} value={exp}>{formatExpiryDate(exp)}</option>
-                            ))
-                        ) : (
-                            <option>Loading...</option>
-                        )}
-                    </select>
-                </div>
-
-                {/* Basket Mode Toggle & Cart */}
-                <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-                    <div
-                        onClick={() => setBasketMode(!basketMode)}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer transition-all select-none border ${basketMode ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200'}`}
-                    >
-                        <Layers size={16} />
-                        <span className="text-xs font-bold">Basket Mode</span>
-                        <div className={`w-8 h-4 rounded-full relative transition-colors ${basketMode ? 'bg-orange-500' : 'bg-gray-300'}`}>
-                            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${basketMode ? 'left-4.5' : 'left-0.5'}`} style={{ left: basketMode ? '18px' : '2px' }}></div>
+                        {/* View Basket Button */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowBasketModal(true)}
+                                className="p-2 hover:bg-gray-100 rounded-full text-gray-600 relative"
+                            >
+                                <ShoppingBag size={20} />
+                                {basket.length > 0 && (
+                                    <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold flex items-center justify-center rounded-full border-2 border-white">
+                                        {basket.length}
+                                    </span>
+                                )}
+                            </button>
                         </div>
                     </div>
+                </div>
+            </header>
 
-                    <button
-                        onClick={() => setShowBasketModal(true)}
-                        className="relative p-2 bg-black text-white rounded-full hover:bg-gray-800 transition-colors shadow-lg"
+            {/* Controls */}
+            <div className="max-w-7xl mx-auto px-4 py-4">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-4 items-center justify-between">
+
+                    {/* Filters */}
+                    <div className="flex items-center gap-3 bg-gray-50 p-1 rounded-lg border border-gray-100">
+                        <select
+                            value={selectedSymbol}
+                            onChange={(e) => setSelectedSymbol(e.target.value)}
+                            className="bg-white text-sm font-semibold px-3 py-1.5 rounded shadow-sm border border-gray-200 focus:outline-none hover:border-blue-300 transition-colors cursor-pointer"
+                        >
+                            <option value="NIFTY">NIFTY</option>
+                            <option value="BANKNIFTY">BANKNIFTY</option>
+                            <option value="FINNIFTY">FINNIFTY</option>
+                            <option value="SENSEX">SENSEX</option>
+                            <option value="CRUDEOIL">CRUDEOIL</option>
+                            <option value="NATURALGAS">NATURALGAS</option>
+
+                        </select>
+
+                        <div className="w-px h-6 bg-gray-200 mx-1"></div>
+
+                        <select
+                            value={expiry}
+                            onChange={(e) => setExpiry(e.target.value)}
+                            className="bg-transparent text-sm font-medium px-2 py-1.5 focus:outline-none text-gray-600 cursor-pointer hover:text-black"
+                        >
+                            {expiryList.length > 0 ? (
+                                expiryList.map(exp => (
+                                    <option key={exp} value={exp}>{formatExpiryDate(exp)}</option>
+                                ))
+                            ) : (
+                                <option disabled>Loading...</option>
+                            )}
+                        </select>
+                    </div>
+
+                    {/* Spot Price */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 font-bold uppercase tracking-wider">Spot Price</span>
+                        <div className="flex items-baseline gap-1">
+                            <span className="text-xl font-bold font-mono text-gray-900">{spotPrice.toLocaleString()}</span>
+                            {/* <span className="text-xs font-bold text-green-600 bg-green-50 px-1 rounded">+0.45%</span> */}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Error Message */}
+                {error && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2"
                     >
-                        <ShoppingBag size={20} />
-                        {basket.length > 0 && (
-                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">
-                                {basket.length}
-                            </span>
-                        )}
-                    </button>
-                </div>
+                        <AlertCircle size={16} />
+                        {error}
+                    </motion.div>
+                )}
             </div>
 
-            {/* Error Message */}
-            {error && (
-                <div className="bg-red-50 p-3 text-center text-red-600 text-sm font-medium border-b border-red-100 flex items-center justify-center gap-2">
-                    <AlertCircle size={16} />
-                    {error}
-                </div>
-            )}
-
-            {/* Info Bar */}
-            <div className="bg-white border-b border-gray-200 px-6 py-2 flex justify-center gap-12 text-xs sticky top-[73px] z-20 shadow-sm">
-                <div className="text-center">
-                    <span className="text-gray-400 font-semibold uppercase tracking-wider block text-[10px]">Spot Price</span>
-                    <span className="text-lg font-bold text-gray-800">{spotPrice.toLocaleString()}</span>
-                </div>
-                <div className="text-center">
-                    <span className="text-gray-400 font-semibold uppercase tracking-wider block text-[10px]">PCR</span>
-                    <span className="text-lg font-bold text-green-600">0.85</span>
-                </div>
-                <div className="text-center">
-                    <span className="text-gray-400 font-semibold uppercase tracking-wider block text-[10px]">Max Pain</span>
-                    <span className="text-lg font-bold text-gray-800">{(Math.round(spotPrice / step) * step).toLocaleString()}</span>
-                </div>
-            </div>
-
-            {/* Content Table */}
-            <div className="flex-1 overflow-auto custom-scrollbar">
+            {/* Option Chain Table */}
+            <div className="max-w-7xl mx-auto px-4 pb-20 overflow-x-auto">
                 {isLoading && strikes.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-gray-400">Loading Option Chain...</div>
+                    <div className="text-center py-20 text-gray-400 animate-pulse">
+                        <RefreshCw className="mx-auto mb-2 animate-spin" />
+                        Loading Option Chain...
+                    </div>
                 ) : (
-                    <table className="w-full text-center border-collapse">
-                        <thead className="bg-gray-50 text-[10px] text-gray-500 uppercase font-semibold sticky top-0 z-10 shadow-sm">
-                            <tr>
-                                <th colSpan={4} className="py-2 border-b border-r border-gray-200 bg-blue-50/50 text-blue-800">Calls</th>
-                                <th className="py-2 border-b border-gray-200 w-24 bg-gray-100 text-gray-800">Strike</th>
-                                <th colSpan={4} className="py-2 border-b border-l border-gray-200 bg-red-50/50 text-red-800">Puts</th>
+                    <table className="w-full border-collapse min-w-[800px]">
+                        <thead>
+                            <tr className="text-[10px] text-gray-400 uppercase tracking-wider bg-gray-50 text-center sticky top-0">
+                                <th colSpan={4} className="py-2 border-b border-gray-200">Calls</th>
+                                <th className="py-2 border-b border-gray-200 w-24">Strike</th>
+                                <th colSpan={4} className="py-2 border-b border-gray-200">Puts</th>
                             </tr>
-                            <tr>
+                            <tr className="text-[10px] text-gray-500 bg-white text-center sticky top-7 z-10 shadow-sm">
                                 <th className="py-2 px-1 font-medium border-b border-gray-200">OI (L)</th>
                                 <th className="py-2 px-1 font-medium border-b border-gray-200">IV</th>
                                 <th className="py-2 px-1 font-medium border-b border-gray-200 hidden md:table-cell">Delta</th>
-                                <th className="py-2 px-1 font-medium border-b border-r border-gray-200 text-right pr-4">LTP</th>
+                                <th className="py-2 px-1 font-medium border-b border-gray-200 border-r text-right pr-4">LTP</th>
 
-                                <th className="py-2 px-1 font-medium border-b border-gray-200 bg-gray-100"></th>
+                                <th className="py-2 px-1 font-medium border-b border-gray-200 bg-gray-50">Strike</th>
 
-                                <th className="py-2 px-1 font-medium border-b border-l border-gray-200 text-left pl-4">LTP</th>
+                                <th className="py-2 px-1 font-medium border-b border-gray-200 border-l text-left pl-4">LTP</th>
                                 <th className="py-2 px-1 font-medium border-b border-gray-200 hidden md:table-cell">Delta</th>
                                 <th className="py-2 px-1 font-medium border-b border-gray-200">IV</th>
                                 <th className="py-2 px-1 font-medium border-b border-gray-200">OI (L)</th>
@@ -529,5 +531,13 @@ export default function OptionChainPage() {
                 />
             )}
         </div>
+    );
+}
+
+export default function OptionChainPage() {
+    return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center">Loading Option Chain...</div>}>
+            <OptionChainContent />
+        </Suspense>
     );
 }
