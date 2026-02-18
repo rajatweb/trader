@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Info, ChevronDown, RotateCcw, Edit2, Layers } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, useDragControls } from 'framer-motion';
 import { useTradingStore, ProductType } from '@/lib/store';
 
 interface OrderModalProps {
@@ -46,11 +47,17 @@ export default function OrderModal({
     const [triggerPrice, setTriggerPrice] = useState(0);
     const [isPlacing, setIsPlacing] = useState(false);
     const [error, setError] = useState('');
+    const [mounted, setMounted] = useState(false);
+    const dragControls = useDragControls();
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Update limit price when modal opens or price changes
     useEffect(() => {
         if (isOpen) {
-            setLimitPrice(price);
+            setLimitPrice(Number(price.toFixed(2)));
             setError('');
 
             // Pre-fill SL order details if provided
@@ -67,7 +74,7 @@ export default function OrderModal({
             }
 
             if (prefilledTriggerPrice) {
-                setTriggerPrice(prefilledTriggerPrice);
+                setTriggerPrice(Number(prefilledTriggerPrice.toFixed(2)));
             } else {
                 setTriggerPrice(0);
             }
@@ -120,14 +127,14 @@ export default function OrderModal({
         }
     }, [type, finalSegment]);
 
-    if (!isOpen) return null;
+    if (!isOpen || !mounted) return null;
 
     const isBuy = type === 'Buy';
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 pointer-events-none">
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-24 font-sans pointer-events-none">
             {/* Backdrop */}
-            <div className="fixed inset-0 bg-black/20 backdrop-blur-[1px] pointer-events-auto" onClick={onClose} />
+            <div className="fixed inset-0 bg-black/20 pointer-events-auto" onClick={onClose} />
 
             {/* Draggable Modal */}
             <motion.div
@@ -135,6 +142,7 @@ export default function OrderModal({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -20 }}
                 drag
+                dragControls={dragControls}
                 dragMomentum={false}
                 dragListener={false}
                 className="bg-white w-[95%] sm:w-[500px] md:w-[600px] rounded-lg shadow-xl overflow-hidden font-sans relative z-10 pointer-events-auto cursor-default text-[#444] mb-10"
@@ -145,7 +153,7 @@ export default function OrderModal({
                 <div
                     className={`px-6 py-4 flex justify-between items-start ${isBuy ? 'bg-[#4184f3]' : 'bg-[#ff5722]'} text-white cursor-grab active:cursor-grabbing`}
                     onPointerDown={(e) => {
-                        // Enable drag only on header
+                        dragControls.start(e);
                     }}
                 >
                     <div>
@@ -419,6 +427,7 @@ export default function OrderModal({
                 </div>
 
             </motion.div>
-        </div>
+        </div>,
+        document.body
     );
 }

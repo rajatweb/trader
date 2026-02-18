@@ -10,7 +10,31 @@ export default function PositionsPage() {
     const { positions, account, closePosition } = useTradingStore();
     const [searchTerm, setSearchTerm] = useState('');
     const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+    const [selectedPositions, setSelectedPositions] = useState<Set<string>>(new Set());
     const menuRef = useRef<HTMLDivElement>(null);
+
+    // Toggle single position selection
+    const togglePositionSelection = (securityId: string) => {
+        const newSelected = new Set(selectedPositions);
+        if (newSelected.has(securityId)) {
+            newSelected.delete(securityId);
+        } else {
+            newSelected.add(securityId);
+        }
+        setSelectedPositions(newSelected);
+    };
+
+    // Exit Selected Positions
+    const handleExitSelected = () => {
+        if (selectedPositions.size === 0) return;
+
+        if (confirm(`Are you sure you want to exit ${selectedPositions.size} position(s)?`)) {
+            selectedPositions.forEach(id => {
+                closePosition(id);
+            });
+            setSelectedPositions(new Set());
+        }
+    };
 
     // Order Modal state for SL orders
     const [orderModalConfig, setOrderModalConfig] = useState({
@@ -44,6 +68,17 @@ export default function PositionsPage() {
         pos.symbol.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    // Toggle all visible positions
+    const toggleAllPositions = () => {
+        const activePositions = filteredPositions.filter(p => p.quantity !== 0);
+        if (selectedPositions.size === activePositions.length && activePositions.length > 0) {
+            setSelectedPositions(new Set());
+        } else {
+            const allIds = activePositions.map(p => p.securityId);
+            setSelectedPositions(new Set(allIds));
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-white text-[#444]">
             {/* Header / Toolbar */}
@@ -53,6 +88,18 @@ export default function PositionsPage() {
                 </h1>
 
                 <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
+                    {/* Bulk Exit Button */}
+                    {selectedPositions.size > 0 && (
+                        <motion.button
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            onClick={handleExitSelected}
+                            className="bg-red-50 text-red-600 px-3 py-1.5 rounded-sm text-xs font-medium flex items-center gap-2 hover:bg-red-100 transition-colors border border-red-100"
+                        >
+                            <Trash2 size={13} /> Exit Selected ({selectedPositions.size})
+                        </motion.button>
+                    )}
+
                     <div className="relative w-full md:w-auto">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={13} />
                         <input
@@ -93,7 +140,15 @@ export default function PositionsPage() {
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-[#fcfcfc] text-gray-500 text-[11px] border-b border-gray-100">
                                     <tr>
-                                        <th className="px-5 py-3 w-10 font-medium border-b border-gray-100"><input type="checkbox" className="accent-[#387ed1] w-3 h-3" /></th>
+                                        <th className="px-5 py-3 w-10 font-medium border-b border-gray-100">
+                                            <input
+                                                type="checkbox"
+                                                className="accent-[#387ed1] w-3 h-3 cursor-pointer"
+                                                checked={selectedPositions.size > 0 && selectedPositions.size === filteredPositions.filter(p => p.quantity !== 0).length}
+                                                onChange={toggleAllPositions}
+                                                disabled={filteredPositions.filter(p => p.quantity !== 0).length === 0}
+                                            />
+                                        </th>
                                         <th className="px-3 py-3 font-medium border-b border-gray-100">Product</th>
                                         <th className="px-3 py-3 font-medium border-b border-gray-100">Instrument</th>
                                         <th className="px-3 py-3 font-medium text-right border-b border-gray-100">Qty.</th>
@@ -111,7 +166,15 @@ export default function PositionsPage() {
 
                                         return (
                                             <tr key={pos.securityId} className={`hover:bg-[#f9f9f9] transition-colors border-b border-gray-50 bg-white group relative ${pos.quantity === 0 ? 'opacity-60 bg-gray-50' : ''}`}>
-                                                <td className="px-5 py-3"><input type="checkbox" className="accent-[#387ed1] w-3 h-3" disabled={pos.quantity === 0} /></td>
+                                                <td className="px-5 py-3">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="accent-[#387ed1] w-3 h-3 cursor-pointer"
+                                                        disabled={pos.quantity === 0}
+                                                        checked={selectedPositions.has(pos.securityId)}
+                                                        onChange={() => togglePositionSelection(pos.securityId)}
+                                                    />
+                                                </td>
                                                 <td className="px-3 py-3">
                                                     <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-[2px] uppercase tracking-wide font-medium">{pos.productType}</span>
                                                 </td>
@@ -131,7 +194,7 @@ export default function PositionsPage() {
                                                 <td className="px-3 py-3 text-right text-gray-600">{avgPrice.toFixed(2)}</td>
                                                 <td className={`px-3 py-3 text-right ${pos.quantity === 0 ? 'text-gray-500 font-medium' : 'text-gray-900'}`}>{pos.ltp.toFixed(2)}</td>
                                                 <td className={`px-3 py-3 text-right font-medium ${pos.quantity === 0 ? 'text-gray-400' : (pos.totalPnl >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]')}`}>
-                                                    {pos.totalPnl >= 0 ? '+' : ''}{pos.totalPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    {pos.totalPnl >= 0 ? '+' : ''}{pos.totalPnl.toFixed(2)}
                                                 </td>
                                                 <td className="px-5 py-3 text-right text-gray-400 text-[11px]">
                                                     {pos.quantity !== 0 ? `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%` : '-'}
@@ -233,7 +296,7 @@ export default function PositionsPage() {
                                     <tr className="bg-white">
                                         <td colSpan={6} className="px-3 py-4 text-right font-medium text-gray-500 text-[13px]">Total P&L</td>
                                         <td className={`px-3 py-4 text-right font-semibold text-[15px] ${totalPnL >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                                            {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                            {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toFixed(2)}
                                         </td>
                                         <td colSpan={2}></td>
                                     </tr>
