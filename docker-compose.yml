@@ -12,7 +12,7 @@ services:
     command: npm run start
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.next.rule=Host(`tader.rajatweb.com`)"
+      - "traefik.http.routers.next.rule=Host(`trader.rajatweb.com`)"
       - "traefik.http.routers.next.entrypoints=websecure"
       - "traefik.http.routers.next.tls=true"
       - "traefik.http.services.next.loadbalancer.server.port=9000"
