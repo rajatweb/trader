@@ -21,8 +21,6 @@ COPY . .
 # Clean previous build
 RUN rm -rf .next
 
-# Ensure Prisma uses the correct binary target
-RUN npx prisma generate
 
 # Build the app
 RUN npm run build
