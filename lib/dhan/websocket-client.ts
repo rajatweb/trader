@@ -60,13 +60,13 @@ export class DhanFeedClient {
                 // Handle text messages (Ping/Pong/Connection status)
                 if (typeof event.data === 'string') {
                     // console.log("Text Message:", event.data);
-                    // Server sends text pings, or we might need to handle them?
-                    // Dhan docs say "Server side sends ping every 10 seconds".
-                    // "An automated pong is sent by websocket library. You can use the same as response to the ping."
-                    // If we receive a text frame, it might be a ping if the browser doesn't handle it auto.
-                    // But typically browsers handle Ping/Pong frames automatically and don't expose them to JS.
-                    // However, if Dhan sends a TEXT "Ping", we should echo. 
-                    // Let's assume standard behavior first, but if disconnects happen, we might need manual pong.
+                    // Log text messages for debugging
+                    console.log("[Dhan Feed] Text Message:", event.data);
+                    // Explicitly handle ping if needed (though unlikely)
+                    if (event.data === 'Ping') {
+                        // Responding with Pong if server expects text-based ping-pong
+                        // this.socket?.send('Pong');
+                    }
                 } else if (event.data instanceof ArrayBuffer) {
                     const updates = parseDhanBinaryPacket(event.data);
                     if (updates.length > 0) {
@@ -75,7 +75,7 @@ export class DhanFeedClient {
                 }
             };
 
-            this.socket.onerror = (error) => {
+            this.socket.onerror = () => {
                 // onerror usually doesn't have details, but we log it
                 console.error('Dhan Feed WebSocket Error');
                 if (this.onStatusChange) this.onStatusChange('ERROR');
@@ -111,8 +111,12 @@ export class DhanFeedClient {
     private attemptReconnect() {
         if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
         this.reconnectAttempts++;
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+        const delay = Math.min(2000 * Math.pow(2, this.reconnectAttempts), 60000);
         console.log(`Dhan Feed: Reconnecting in ${delay / 1000}s (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+
+        if (this.reconnectAttempts > 3) {
+            console.warn("Frequent disconnections detected. Please check your internet connection or if your IP is being rate-limited.");
+        }
 
         this.reconnectTimeout = setTimeout(() => {
             this.connect();
@@ -171,11 +175,13 @@ export class DhanFeedClient {
 
         if (this.socket) {
             // Send unsubscribe or disconnect packet if needed, but close() is usually enough
-            /*
             try {
-                this.socket.send(JSON.stringify({ "RequestCode": 12 }));
-            } catch (e) {}
-            */
+                if (this.socket.readyState === WebSocket.OPEN) {
+                    this.socket.send(JSON.stringify({ "RequestCode": 12 }));
+                }
+            } catch (e) {
+                console.warn('Error sending disconnect packet:', e);
+            }
             this.socket.close();
             this.socket = null;
             // Actually let's clear instruments if we're purposefully disconnecting to avoid stale subs.

@@ -64,6 +64,12 @@ export default function ConsolePage() {
         return filteredTradeHistory.reduce((acc, trade) => acc + trade.realizedPnl, 0);
     }, [filteredTradeHistory]);
 
+    const totalCharges = useMemo(() => {
+        return filteredTradeHistory.reduce((acc, trade) => acc + (trade.charges || 0), 0);
+    }, [filteredTradeHistory]);
+
+    const totalNetPnl = totalRealizedPnl - totalCharges;
+
     const stats = useMemo(() => {
         const sorted = [...filteredDailyStats].sort((a, b) => b.date.localeCompare(a.date));
         const profitDays = sorted.filter(s => s.realizedPnl > 0).length;
@@ -138,7 +144,7 @@ export default function ConsolePage() {
                             ].map((range) => (
                                 <button
                                     key={range.id}
-                                    onClick={() => setTimeRange(range.id as any)}
+                                    onClick={() => setTimeRange(range.id as '1M' | '3M' | 'CUSTOM')}
                                     className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${timeRange === range.id ? 'bg-[#387ed1] text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
                                 >
                                     {range.label}
@@ -213,8 +219,8 @@ export default function ConsolePage() {
                                 <FileText size={16} />
                             </div>
                         </div>
-                        <div className="text-2xl font-bold text-gray-900">₹0.00</div>
-                        <p className="text-[10px] text-gray-400 mt-1">Dhan Brokerage Savings</p>
+                        <div className="text-2xl font-bold text-gray-900">₹{totalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                        <p className="text-[10px] text-gray-400 mt-1">Brokerage & Taxes</p>
                     </div>
 
                     <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
@@ -231,12 +237,12 @@ export default function ConsolePage() {
                     <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
                         <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Net Realized</span>
-                            <div className={`p-1.5 rounded-lg ${totalRealizedPnl >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                            <div className={`p-1.5 rounded-lg ${totalNetPnl >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
                                 <TrendingUp size={16} />
                             </div>
                         </div>
-                        <div className={`text-2xl font-bold ${totalRealizedPnl >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                            {totalRealizedPnl >= 0 ? '+' : ''}{totalRealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        <div className={`text-2xl font-bold ${totalNetPnl >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                            {totalNetPnl >= 0 ? '+' : ''}{totalNetPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </div>
                         <p className="text-[10px] text-gray-400 mt-1">Post charges</p>
                     </div>
@@ -282,9 +288,9 @@ export default function ConsolePage() {
                                                     <div key={dIdx} className="relative group">
                                                         <div
                                                             className={`w-full aspect-square rounded-sm border transition-all duration-200 cursor-default ${!day.hasData ? 'bg-gray-50 border-gray-100' :
-                                                                    day.pnl > 0 ? 'bg-[#26a69a]/20 border-[#26a69a]/40 hover:bg-[#26a69a]/40' :
-                                                                        day.pnl < 0 ? 'bg-[#d43725]/20 border-[#d43725]/40 hover:bg-[#d43725]/40' :
-                                                                            'bg-gray-100 border-gray-200'
+                                                                day.pnl > 0 ? 'bg-[#26a69a]/20 border-[#26a69a]/40 hover:bg-[#26a69a]/40' :
+                                                                    day.pnl < 0 ? 'bg-[#d43725]/20 border-[#d43725]/40 hover:bg-[#d43725]/40' :
+                                                                        'bg-gray-100 border-gray-200'
                                                                 }`}
                                                         />
 

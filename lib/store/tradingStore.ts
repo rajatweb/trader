@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
@@ -76,7 +76,8 @@ export interface TradeLog {
     buyPrice: number;
     sellPrice: number;
     realizedPnl: number;
-    segment: string;
+    charges?: number;
+    netPnl?: number;
     timestamp: number;
     type: 'LONG_CLOSE' | 'SHORT_CLOSE';
 }
@@ -251,6 +252,9 @@ interface TradingStore {
         sebi: number;
         stampDuty: number;
     };
+
+    // Internal
+    executeOrder: (order: Order) => void;
 }
 
 
@@ -401,20 +405,20 @@ export const useTradingStore = create<TradingStore>()(
             // WATCHLIST ACTIONS
             // ============================================
 
-            addToWatchlist: (item) => {
+            addToWatchlist: (item: WatchlistItem) => {
                 const { watchlist } = get();
                 if (!watchlist.find(w => w.securityId === item.securityId)) {
                     set({ watchlist: [...watchlist, item] });
                 }
             },
 
-            removeFromWatchlist: (securityId) => {
+            removeFromWatchlist: (securityId: string) => {
                 set((state) => ({
                     watchlist: state.watchlist.filter(w => w.securityId !== securityId)
                 }));
             },
 
-            updateWatchlistPrices: (updates) => {
+            updateWatchlistPrices: (updates: Partial<WatchlistItem>[]) => {
                 set((state) => {
                     const priceMap = new Map<string, number>();
 
@@ -475,7 +479,7 @@ export const useTradingStore = create<TradingStore>()(
                 get().updateAccountSummary();
             },
 
-            reorderWatchlist: (items) => {
+            reorderWatchlist: (items: WatchlistItem[]) => {
                 set({ watchlist: items });
             },
 
@@ -510,7 +514,6 @@ export const useTradingStore = create<TradingStore>()(
                 // Simpler Logic:
                 // We settle trades where Date(trade) > Date(lastSettlementDate) AND Date(trade) < todayStr.
 
-                const lastSettlement = new Date(state.lastSettlementDate);
                 const settleableTrades = tradesToSettle.filter(trade => {
                     const tradeDate = new Date(trade.timestamp);
                     // Just strictly compare date strings to avoid timezone mess for now
@@ -550,7 +553,7 @@ export const useTradingStore = create<TradingStore>()(
             // ORDER ACTIONS
             // ============================================
 
-            placeOrder: (orderData) => {
+            placeOrder: (orderData: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'>) => {
                 const orderId = `ORD_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
                 const newOrder: Order = {
@@ -596,7 +599,7 @@ export const useTradingStore = create<TradingStore>()(
                 return orderId;
             },
 
-            cancelOrder: (orderId) => {
+            cancelOrder: (orderId: string) => {
                 set((state) => ({
                     orders: state.orders.map(order =>
                         order.orderId === orderId && (order.status === 'PENDING' || order.status === 'OPEN')
@@ -607,7 +610,7 @@ export const useTradingStore = create<TradingStore>()(
                 get().updateAccountSummary();
             },
 
-            updateOrderStatus: (orderId, status, filledQty, avgPrice) => {
+            updateOrderStatus: (orderId: string, status: OrderStatus, filledQty?: number, avgPrice?: number) => {
                 set((state) => ({
                     orders: state.orders.map(order => {
                         if (order.orderId !== orderId) return order;
@@ -631,7 +634,7 @@ export const useTradingStore = create<TradingStore>()(
                 get().updateAccountSummary();
             },
 
-            getOrdersByStatus: (status) => {
+            getOrdersByStatus: (status: OrderStatus) => {
                 return get().orders.filter(order => order.status === status);
             },
 
@@ -709,7 +712,7 @@ export const useTradingStore = create<TradingStore>()(
             // POSITION ACTIONS
             // ============================================
 
-            updatePosition: (securityId, ltp) => {
+            updatePosition: (securityId: string, ltp: number) => {
                 set((state) => ({
                     positions: state.positions.map(pos => {
                         if (pos.securityId !== securityId) return pos;
@@ -734,7 +737,7 @@ export const useTradingStore = create<TradingStore>()(
                 get().updateAccountSummary();
             },
 
-            closePosition: (securityId) => {
+            closePosition: (securityId: string) => {
                 const position = get().positions.find(p => p.securityId === securityId);
                 if (!position || position.quantity === 0) return;
 
@@ -762,7 +765,7 @@ export const useTradingStore = create<TradingStore>()(
                 get().placeOrder(closeOrder);
             },
 
-            getPositionBySecurityId: (securityId) => {
+            getPositionBySecurityId: (securityId: string) => {
                 return get().positions.find(p => p.securityId === securityId);
             },
 
@@ -770,7 +773,7 @@ export const useTradingStore = create<TradingStore>()(
             // MARGIN & ACCOUNT ACTIONS
             // ============================================
 
-            calculateMargin: (order) => {
+            calculateMargin: (order: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'>) => {
                 const { account, positions } = get();
                 let requiredMargin = 0;
 
@@ -780,7 +783,7 @@ export const useTradingStore = create<TradingStore>()(
 
                 // Calculate order value (price × quantity × lot size for F&O)
                 const actualQuantity = instrumentDetails.isEquity ? order.quantity : order.quantity * lotSize;
-                const orderValue = order.price * actualQuantity;
+                // orderValue was unused
 
                 // CHECK IF THIS ORDER REDUCES AN EXISTING POSITION
                 // If so, margin should be 0 for the reducing part, but full margin for any excess (filpping/adding)
@@ -860,7 +863,7 @@ export const useTradingStore = create<TradingStore>()(
                                     // Sanity check: if strike is year (2025/2026), it might be wrong if Index is Nifty (24000).
                                     // But usually Strike is distinct.
                                 }
-                            } catch (e) {
+                            } catch {
                                 strikePrice = 0;
                             }
 
@@ -941,11 +944,18 @@ export const useTradingStore = create<TradingStore>()(
                 symbol,
                 segment,
                 productType,
-                orderType,
                 quantity,
                 price,
                 side,
                 exchange
+            }: {
+                symbol: string;
+                segment: string;
+                productType: string;
+                quantity: number;
+                price: number;
+                side: 'BUY' | 'SELL';
+                exchange: string;
             }) => {
                 // Get instrument details to determine correct STT rate
                 const details = get().getInstrumentDetails(symbol, segment);
@@ -999,41 +1009,11 @@ export const useTradingStore = create<TradingStore>()(
             // SETTLEMENT
             // ============================================
 
-            performDailySettlement: () => {
-                const state = get();
-                const now = new Date();
-                const currentHour = now.getHours();
-                const todayStr = now.toISOString().split('T')[0];
-
-                // Rule: Settlement runs only after 6:00 AM
-                if (state.lastSettlementDate === todayStr) return;
-                if (currentHour < 6) return;
-
-                console.log('[Settlement] Running daily cleanup...');
-
-                // NOT CALCUATING CHARGES HERE ANYMORE as they are settled real-time.
-                // This function is now purely for POSITION CLEANUP.
-
-                // Clear Closed Positions AND MIS positions
-                const activePositions = state.positions.filter(pos => {
-                    // Always keep open Delivery/Normal positions
-                    if (pos.quantity !== 0 && pos.productType !== 'MIS') return true;
-                    return false;
-                });
-
-                console.log(`[Settlement] Cleanup: Cleared ${state.positions.length - activePositions.length} positions.`);
-
-                set({
-                    positions: activePositions,
-                    lastSettlementDate: todayStr
-                });
-            },
-
             // ============================================
             // BROKER CONNECTION
             // ============================================
 
-            connectBroker: (clientId, accessToken) => {
+            connectBroker: (clientId: string, accessToken: string) => {
                 set({
                     isConnected: true,
                     brokerCredentials: { clientId, accessToken },
@@ -1049,7 +1029,7 @@ export const useTradingStore = create<TradingStore>()(
                 });
             },
 
-            setFeedStatus: (status) => {
+            setFeedStatus: (status: FeedStatus) => {
                 set({ feedStatus: status });
             },
 
@@ -1169,8 +1149,14 @@ export const useTradingStore = create<TradingStore>()(
                     // Wait, I need to restructure to avoid 'pos' error.
                     // Let's stick to map approach but cleaned up.
 
-                    const updatedPositions = state.positions.map(p => {
-                        if (p.securityId !== order.securityId) return p;
+                    // Refactoring map to for loop to avoid closure mutation issues with TypeScript
+                    const updatedPositions: Position[] = [];
+
+                    for (const p of state.positions) {
+                        if (p.securityId !== order.securityId) {
+                            updatedPositions.push(p);
+                            continue;
+                        }
 
                         pos = p; // Capture current pos
                         const isBuy = order.side === 'BUY';
@@ -1223,16 +1209,8 @@ export const useTradingStore = create<TradingStore>()(
                             }
                         }
 
-                        // Trade Log generation (Simplified for brevity, similar to before but using calculated realizedPnl)
+                        // Trade Log generation
                         if (currentRealizedPnl !== 0 || isFlipping || (isIncreasing && orderActualQty > 0)) {
-                            // Actually we log every executed order leg? Usually yes.
-                            // But here we log only when 'closing' or 'opening'?
-                            // Let's log if REALIZED PNL is generated (Closing).
-                            // BUT we also need to log Entry for history?
-                            // The user wants Trade History of all trades or just PnL trades?
-                            // Usually all trades.
-                            // Let's create a log for this execution regardless.
-
                             tradeLog = {
                                 id: `TL_${Date.now()}`,
                                 symbol: pos.symbol,
@@ -1242,22 +1220,12 @@ export const useTradingStore = create<TradingStore>()(
                                 lotSize: lotSize,
                                 buyPrice: isBuy ? order.avgPrice : 0,
                                 sellPrice: !isBuy ? order.avgPrice : 0,
-                                // Wait, TradeLog structure assumes Buy/Sell prices? 
-                                // My interface has buyPrice, sellPrice.
-                                // For a single leg trade, one is 0? Or it's the price?
-                                // Let's set the relevant price.
-                                // Actually, if it's closing, we have both entry and exit prices conceptually.
-                                // But here we are just logging the EXECUTION.
-                                // So tradeLog should reflect the order.
-                                // BUT, previous code was calculating Realized PnL and attaching it.
-
                                 realizedPnl: currentRealizedPnl,
                                 segment: pos.segment, // Added for charge calculation
                                 timestamp: Date.now(),
-                                type: isBuy ? 'SHORT_CLOSE' : 'LONG_CLOSE' // This terminology is only valid if closing.
-                                // If opening, it's LONG_OPEN or SHORT_OPEN?
-                                // Interface restricts to LONG_CLOSE | SHORT_CLOSE.
-                                // Ignoring type mismatch for now or assuming it's forced.
+                                type: isBuy ? 'SHORT_CLOSE' : 'LONG_CLOSE',
+                                charges: 0,
+                                netPnl: 0
                             };
                         }
 
@@ -1266,13 +1234,13 @@ export const useTradingStore = create<TradingStore>()(
                             newQty = 0;
                         }
 
-                        const unrealizedPnl = newQty !== 0
+                        const unrealizedPnlForPos = newQty !== 0
                             ? (newQty > 0 ? (pos.ltp - avgBuyPrice) * newQty : (avgSellPrice - pos.ltp) * Math.abs(newQty))
                             : 0;
 
                         const finalLtp = newQty === 0 ? order.avgPrice : pos.ltp; // If closed, show exit price as LTP
 
-                        return {
+                        updatedPositions.push({
                             ...pos,
                             quantity: newQty,
                             buyQty: isBuy ? pos.buyQty + orderActualQty : pos.buyQty,
@@ -1281,10 +1249,10 @@ export const useTradingStore = create<TradingStore>()(
                             avgSellPrice,
                             ltp: finalLtp,
                             realizedPnl,
-                            unrealizedPnl,
-                            totalPnl: realizedPnl + unrealizedPnl
-                        };
-                    });
+                            unrealizedPnl: unrealizedPnlForPos,
+                            totalPnl: realizedPnl + unrealizedPnlForPos
+                        });
+                    }
 
                     // Calculate charges and Net P&L immediately if a trade happened
                     let newAccount = state.account;
@@ -1304,13 +1272,13 @@ export const useTradingStore = create<TradingStore>()(
                         // (We need to update the TradeLog type first, but purely for logic it works here as JS object)
                         // Ideally strictly typed, we should extend TradeLog interface.
                         // For now, attaching loosely.
-                        (tradeLog as any).charges = charges;
-                        (tradeLog as any).netPnl = netPnl;
+                        tradeLog.charges = charges;
+                        tradeLog.netPnl = netPnl;
                     }
 
                     // Update history and stats
                     const newTradeHistory = tradeLog ? [tradeLog, ...state.tradeHistory] : state.tradeHistory;
-                    let newDailyStats = [...state.dailyStats];
+                    const newDailyStats = [...state.dailyStats];
 
                     if (tradeLog) {
                         const statsIdx = newDailyStats.findIndex(s => s.date === today);
@@ -1338,7 +1306,7 @@ export const useTradingStore = create<TradingStore>()(
 
                 });
             }
-        } as any), // Type assertion to handle internal helper methods
+        } as unknown as TradingStore), // Type assertion to handle internal helper methods
         {
             name: 'trading-store',
             storage: createJSONStorage(() => localStorage),

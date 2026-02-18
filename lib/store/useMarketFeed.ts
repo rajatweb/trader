@@ -95,9 +95,13 @@ export function useMarketFeed() {
         checkPendingOrders(updates);
     }, [updateWatchlistPrices, checkPendingOrders]);
 
+    // ----------------------------------------------------------------
+    // 1. Connection Management Effect
+    // Only runs when credentials or explicit connection status changes
+    // ----------------------------------------------------------------
     useEffect(() => {
-        // Only connect if broker is connected and we have instruments
-        if (!isConnected || !brokerCredentials || (watchlist.length === 0 && positions.length === 0)) {
+        // Only connect if broker is connected and we have valid credentials
+        if (!isConnected || !brokerCredentials) {
             return;
         }
 
@@ -115,6 +119,26 @@ export function useMarketFeed() {
         client.connect();
         feedClientRef.current = client;
 
+        // Cleanup: Disconnect when credentials change or component unmounts
+        return () => {
+            client.disconnect();
+            feedClientRef.current = null;
+        };
+        // Dependencies are minimal to prevent unnecessary reconnects
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isConnected, brokerCredentials?.clientId, brokerCredentials?.accessToken, handleMarketUpdates, handleError, setFeedStatus]);
+
+
+    // ----------------------------------------------------------------
+    // 2. Subscription Management Effect
+    // Runs when valid instruments list changes (watchlist/positions)
+    // ----------------------------------------------------------------
+    useEffect(() => {
+        const client = feedClientRef.current;
+
+        // If client is not ready or no instruments, skip
+        if (!client || !isConnected) return;
+
         // Subscribe to all instruments (watchlist + positions)
         const allInstruments = new Map<string, { segment: string; securityId: string }>();
 
@@ -128,18 +152,14 @@ export function useMarketFeed() {
 
         const instrumentList = Array.from(allInstruments.values());
         if (instrumentList.length > 0) {
+            // Subscribe without reconnecting
             client.subscribe(instrumentList, 17); // Quote mode
         }
-
-        // Cleanup
-        return () => {
-            client.disconnect();
-            feedClientRef.current = null;
-        };
-    }, [isConnected, watchlist.length, positions.length, brokerCredentials, handleMarketUpdates, handleError, setFeedStatus]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watchlist.length, positions.length, isConnected]); // Only re-subscribe if list length changes. (Using length as proxy for structure changes is a safe optimization here)
 
     return {
-        isConnected: feedClientRef.current !== null,
+        isConnected: isConnected, // Return the store's connection state, or feedStatus === 'CONNECTED'
         reconnect: () => {
             if (feedClientRef.current) {
                 feedClientRef.current.disconnect();
