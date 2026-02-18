@@ -1,33 +1,22 @@
-FROM node:current-slim
-
-# Install OpenSSL and dependencies
-RUN apt-get update -y && \
-    apt-get install -y openssl libssl-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Set working directory
+# Build Stage
+FROM node:20-slim AS builder
 WORKDIR /app
-
-# Copy dependency files first (for better cache)
 COPY package*.json ./
-
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application
+RUN npm ci
 COPY . .
-
-# Clean previous build
-RUN rm -rf .next
-
-
-# Build the app
 RUN npm run build
 
-# Expose ports
+# Production Stage
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV production
+ENV PORT 7000
+
+# Copy necessary files
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
 EXPOSE 7000
 
-
-# Run migrations and start both processes
-CMD ["sh", "-c", "npm start"]
+CMD ["node", "server.js"]
