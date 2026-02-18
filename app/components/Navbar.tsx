@@ -1,10 +1,11 @@
 'use client';
 
-import { Bell, ShoppingBag, User, Plug, CheckCircle2, Menu } from 'lucide-react';
+import { Bell, ShoppingBag, User, Plug, CheckCircle2, Menu, Layers } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useTradingStore } from '@/lib/store';
+import BasketModal from './BasketModal'; // Import BasketModal
 
 interface NavbarProps {
     onToggleSidebar?: () => void;
@@ -15,6 +16,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
     const pathname = usePathname();
     const { isConnected, brokerCredentials, disconnectBroker, performDailySettlement } = useTradingStore();
     const [showDropdown, setShowDropdown] = useState(false);
+    const [showBasketModal, setShowBasketModal] = useState(false); // State to toggle Basket Modal
 
     useEffect(() => {
         // Run daily settlement check on app start
@@ -23,8 +25,9 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
 
     return (
         <nav className="h-[60px] bg-white border-b border-[#e0e0e0] flex items-center justify-between px-6 shadow-sm sticky top-0 z-50">
+            {/* Basket Modal Integration */}
+            <BasketModal isOpen={showBasketModal} onClose={() => setShowBasketModal(false)} />
 
-            {/* Index Summary */}
             {/* Mobile Menu Button */}
             <button
                 className="md:hidden mr-4 p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
@@ -39,9 +42,6 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
                     <span className="font-semibold text-[#444]">Paper trading</span>
                 </div>
             </div>
-
-            {/* Logo */}
-
 
             {/* Navigation Links - Hidden on Mobile, Visible on Desktop */}
             <div className="hidden md:flex items-center gap-8 text-sm text-[#666]">
@@ -61,6 +61,14 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
                         {item.name}
                     </Link>
                 ))}
+
+                <button
+                    onClick={() => setShowBasketModal(true)}
+                    className="flex items-center gap-1.5 text-sm font-medium hover:text-[#ff5722] transition-colors"
+                >
+                    <Layers size={16} />
+                    <span>Baskets</span>
+                </button>
 
                 <div className="flex items-center gap-4 border-l border-[#eee] pl-4 ml-2">
                     <Link href="/" className="hover:text-[#ff5722]"><ShoppingBag size={18} /></Link>

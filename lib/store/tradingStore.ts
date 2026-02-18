@@ -115,6 +115,20 @@ export interface AccountSummary {
     marginUtilization: number; // Percentage
 }
 
+export interface BasketItem {
+    id: string; // Unique ID for the item in basket
+    securityId: string;
+    symbol: string;
+    exchange: string;
+    segment: string;
+    side: 'BUY' | 'SELL';
+    productType: ProductType;
+    orderType: OrderType;
+    quantity: number; // In lots
+    price: number;
+    ltp: number;
+}
+
 // ============================================
 // LOT SIZE MAPPING (F&O Contracts)
 // ============================================
@@ -213,6 +227,14 @@ interface TradingStore {
     updatePosition: (securityId: string, ltp: number) => void;
     closePosition: (securityId: string) => void;
     getPositionBySecurityId: (securityId: string) => Position | undefined;
+    convertPosition: (securityId: string, toProductType: ProductType) => void;
+
+    // Basket
+    basket: BasketItem[];
+    addToBasket: (item: BasketItem) => void;
+    removeFromBasket: (id: string) => void;
+    updateBasketItem: (id: string, updates: Partial<BasketItem>) => void;
+    clearBasket: () => void;
 
     // Account & Margin
     account: AccountSummary;
@@ -267,8 +289,8 @@ interface TradingStore {
 // ============================================
 
 const initialAccount: AccountSummary = {
-    totalCapital: 100000, // Default paper trading capital
-    availableMargin: 100000,
+    totalCapital: 500000, // Default paper trading capital
+    availableMargin: 500000,
     usedMargin: 0,
     realizedPnl: 0,
     unrealizedPnl: 0,
@@ -397,6 +419,7 @@ export const useTradingStore = create<TradingStore>()(
             watchlist: [],
             orders: [],
             positions: [],
+            basket: [],
             tradeHistory: [],
             dailyStats: [],
             account: initialAccount,
@@ -448,6 +471,7 @@ export const useTradingStore = create<TradingStore>()(
                         return item;
                     });
 
+
                     // 2. Update Positions (Live MTM)
                     const newPositions = state.positions.map(pos => {
                         const ltp = priceMap.get(String(pos.securityId)) ||
@@ -472,9 +496,20 @@ export const useTradingStore = create<TradingStore>()(
                         };
                     });
 
+                    const newBasket = state.basket.map(item => {
+                        const ltp = priceMap.get(String(item.securityId)) ||
+                            updates.find(u => String(u.securityId) === String(item.securityId))?.ltp;
+
+                        if (ltp) {
+                            return { ...item, ltp };
+                        }
+                        return item;
+                    });
+
                     return {
                         watchlist: newWatchlist,
-                        positions: newPositions
+                        positions: newPositions,
+                        basket: newBasket
                     };
                 });
 
@@ -815,6 +850,39 @@ export const useTradingStore = create<TradingStore>()(
                 get().placeOrder(closeOrder);
             },
 
+            convertPosition: (securityId: string, toProductType: ProductType) => {
+                set((state) => ({
+                    positions: state.positions.map(p =>
+                        p.securityId === securityId ? { ...p, productType: toProductType } : p
+                    )
+                }));
+                get().updateAccountSummary();
+                soundManager.play('placed'); // Feedback sound
+            },
+
+            // ============================================
+            // BASKET ACTIONS
+            // ============================================
+
+            addToBasket: (item: BasketItem) => {
+                set((state) => ({ basket: [...state.basket, item] }));
+                soundManager.play('notification');
+            },
+
+            removeFromBasket: (id: string) => {
+                set((state) => ({ basket: state.basket.filter(i => i.id !== id) }));
+            },
+
+            updateBasketItem: (id: string, updates: Partial<BasketItem>) => {
+                set((state) => ({
+                    basket: state.basket.map(i => i.id === id ? { ...i, ...updates } : i)
+                }));
+            },
+
+            clearBasket: () => {
+                set({ basket: [] });
+            },
+
             getPositionBySecurityId: (securityId: string) => {
                 return get().positions.find(p => p.securityId === securityId);
             },
@@ -825,7 +893,6 @@ export const useTradingStore = create<TradingStore>()(
 
             calculateMargin: (order: Omit<Order, 'orderId' | 'timestamp' | 'status' | 'filledQty' | 'avgPrice'>) => {
                 const { account, positions } = get();
-                let requiredMargin = 0;
 
                 // Get instrument details including lot size
                 const instrumentDetails = get().getInstrumentDetails(order.symbol, order.segment);
@@ -833,143 +900,148 @@ export const useTradingStore = create<TradingStore>()(
 
                 // Calculate order value (price × quantity × lot size for F&O)
                 const actualQuantity = instrumentDetails.isEquity ? order.quantity : order.quantity * lotSize;
-                // orderValue was unused
 
-                // CHECK IF THIS ORDER REDUCES AN EXISTING POSITION
-                // If so, margin should be 0 for the reducing part, but full margin for any excess (filpping/adding)
-
+                // New Units (logic to handle position flipping/reduction matches previous implementation)
                 const existingPosition = positions.find(p => p.securityId === order.securityId);
                 const existingQty = existingPosition ? existingPosition.quantity : 0;
-
-                // Determine reducing quantity in UNITS vs New UNITS
-                let reducingUnits = 0;
                 let newUnits = 0;
+                let reducingUnits = 0;
 
-                // actualQuantity is the total units of the order
                 if (Math.abs(existingQty) > 0.001) {
                     if (existingQty > 0 && order.side === 'SELL') {
-                        // Holding Long, Selling
                         reducingUnits = Math.min(actualQuantity, existingQty);
                         newUnits = Math.max(0, actualQuantity - existingQty);
                     } else if (existingQty < 0 && order.side === 'BUY') {
-                        // Holding Short, Buying
                         reducingUnits = Math.min(actualQuantity, Math.abs(existingQty));
                         newUnits = Math.max(0, actualQuantity - Math.abs(existingQty));
                     } else {
-                        // Adding to position or new position (Same Side)
                         newUnits = actualQuantity;
                     }
                 } else {
-                    // No existing position
                     newUnits = actualQuantity;
                 }
 
                 if (newUnits === 0 && reducingUnits > 0) {
-                    // Purely closing
-                    requiredMargin = 0;
-                } else {
-                    // Calculate margin based on NEW UNITS
-                    // We need to convert newUnits back to 'lots' if it's F&O for the logic below?
-                    // The logic below uses 'orderValue' which is calculated from 'actualQuantity'.
-                    // We should re-calculate orderValue based on 'newUnits'.
+                    return {
+                        securityId: order.securityId,
+                        symbol: order.symbol,
+                        orderType: order.orderType,
+                        productType: order.productType,
+                        quantity: order.quantity,
+                        price: order.price,
+                        requiredMargin: 0,
+                        availableMargin: account.availableMargin,
+                        sufficient: true,
+                        isHedged: false
+                    };
+                }
 
-                    const newOrderValue = order.price * newUnits;
+                // 2026 PEAK MARGIN RULES
+                let requiredMargin = 0;
+                const newOrderValue = order.price * newUnits;
 
-                    // Also for Option Sell, it uses order.quantity (lots).
-                    // We need 'newOrderLots'
-                    const newOrderLots = instrumentDetails.isEquity ? newUnits : newUnits / lotSize;
+                // Identify Root Symbol & Index 
+                const rootSymbol = order.symbol.split(' ')[0].toUpperCase(); // NIFTY, BANKNIFTY, RELIANCE
+                const isNifty = rootSymbol === 'NIFTY';
+                const isBankNifty = rootSymbol === 'BANKNIFTY';
+                const isFinNifty = rootSymbol === 'FINNIFTY';
+                const isIndex = isNifty || isBankNifty || isFinNifty || rootSymbol === 'SENSEX' || rootSymbol === 'BANKEX';
 
-                    if (instrumentDetails.isEquity) {
-                        // EQUITY MARGIN RULES
-                        if (order.productType === 'CNC') {
-                            requiredMargin = newOrderValue;
-                        } else if (order.productType === 'MIS') {
-                            requiredMargin = newOrderValue * 0.2;
-                        } else {
-                            requiredMargin = newOrderValue;
-                        }
-                    } else if (instrumentDetails.isOptions) {
-                        // OPTIONS MARGIN RULES
+                if (instrumentDetails.isEquity) {
+                    // 🔴 EQUITY RULE: VaR + ELM (Approx 20% - 25%)
+                    if (order.side === 'SELL' && order.productType === 'CNC') {
+                        requiredMargin = 0;
+                    } else {
+                        requiredMargin = newOrderValue * 0.20;
+                    }
+
+                } else if (instrumentDetails.isCommodity) {
+                    // 🛢️ MCX COMMODITY RULES
+                    const isOption = instrumentDetails.isOptions;
+
+                    if (isOption) {
                         if (order.side === 'BUY') {
-                            // Option BUY: Premium only
+                            // 🟢 OPTION BUY: 100% Premium
                             requiredMargin = newOrderValue;
                         } else {
-                            // Option SELL (Writing): SPAN + Exposure (NSE Approx Rule)
-                            // Rule: Notional Value * ~20% (NRML) or ~10% (MIS)
-                            // We attempt to parse Strike Price from symbol to get Notional Value
+                            // 🔴 OPTION SELL: Fixed margins
+                            const lots = newUnits / lotSize;
+                            let marginPerLot = 150000; // Default fallback
 
-                            let strikePrice = 0;
-                            try {
-                                // Extract potential strike price (5 digit number typically for indices, or float)
-                                // Standard format: "BANKNIFTY 24 FEB 60800 PUT" or "NIFTY 18200 CE"
-                                const matches = order.symbol.match(/(\d+)(\.\d+)?/g);
-                                if (matches) {
-                                    // Filter for reasonable strike price range (e.g. > 100) and pick the last one usually
-                                    // or the one that is not part of date.
-                                    // Heuristic: Max number found is likely the strike (if Year is 2026, Strike 60000 > 2026)
-                                    const numbers = matches.map(m => parseFloat(m));
-                                    strikePrice = Math.max(...numbers);
+                            if (rootSymbol.includes('CRUDE')) marginPerLot = 100000;    // ₹1L
+                            else if (rootSymbol.includes('NATURALGAS')) marginPerLot = 150000; // ₹1.5L
+                            else if (rootSymbol.includes('GOLD')) marginPerLot = 150000; // ₹1.5L
+                            else if (rootSymbol.includes('SILVER')) marginPerLot = 200000; // ₹2L
+                            else if (rootSymbol.includes('COPPER') || rootSymbol.includes('ZINC')) marginPerLot = 120000;
 
-                                    // Sanity check: if strike is year (2025/2026), it might be wrong if Index is Nifty (24000).
-                                    // But usually Strike is distinct.
-                                }
-                            } catch {
-                                strikePrice = 0;
-                            }
-
-                            // Fallback if Strike parsing fails: Use Fixed Average
-                            if (strikePrice < 100) {
-                                // Fallback
-                                strikePrice = order.symbol.includes('BANK') ? 50000 : 25000;
-                            }
-
-                            const notionalValue = strikePrice * newUnits; // Total Contract Value
-
-                            // Margin % typically 15-20% for Indices
-                            // NRML: 20% of Notional + Premium? No, Margin covers risk.
-                            // Simply 18% of Notional is a good approximation for SPAN+Exposure.
-
-                            const rootSymbol = order.symbol.split(' ')[0];
-                            const isIndex = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX'].includes(rootSymbol);
-                            const marginPercent = isIndex ? 0.18 : 0.25;
-
-                            let baseMargin = notionalValue * marginPercent;
-
-                            // HEDGE BENEFIT CHECK
+                            // � HEDGE BENEFIT (Spread)
                             const hasHedge = positions.some(p =>
                                 p.quantity > 0 &&
-                                p.symbol.startsWith(rootSymbol) &&
-                                (p.segment.includes('FNO') || p.segment.includes('NFO') || p.segment.includes('BFO'))
+                                p.symbol.includes(rootSymbol) &&
+                                p.exchange === 'MCX'
                             );
 
                             if (hasHedge) {
-                                baseMargin = baseMargin * 0.25; // 75% reduction
-                            }
-
-                            if (order.productType === 'MIS') {
-                                requiredMargin = baseMargin * 0.5;
+                                requiredMargin = lots * (marginPerLot * 0.25); // 75% reduction
                             } else {
-                                requiredMargin = baseMargin;
+                                requiredMargin = lots * marginPerLot;
                             }
-
-                            // Safety Floor: Minimum ₹2000 per lot to prevent zero margin on bad data
-                            const minMargin = (newOrderLots * 2000);
-                            requiredMargin = Math.max(requiredMargin, minMargin);
-                        }
-                    } else if (instrumentDetails.isFutures) {
-                        // FUTURES MARGIN
-                        if (order.productType === 'MIS') {
-                            requiredMargin = newOrderValue * 0.08;
-                        } else {
-                            requiredMargin = newOrderValue * 0.20;
                         }
                     } else {
-                        requiredMargin = newOrderValue * 0.15;
+                        // � FUTURES (MCX)
+                        // Higher volatility = Higher Margin
+                        let marginPercent = 0.15; // Default
+
+                        if (rootSymbol.includes('CRUDE')) marginPercent = 0.20;       // ~20% (High Volatility)
+                        else if (rootSymbol.includes('NATURALGAS')) marginPercent = 0.25; // ~25% (Very High Volatility)
+                        else if (rootSymbol.includes('GOLD')) marginPercent = 0.14;       // ~14%
+                        else if (rootSymbol.includes('SILVER')) marginPercent = 0.18;     // ~18%
+                        else if (rootSymbol.includes('COPPER')) marginPercent = 0.18;
+                        else if (rootSymbol.includes('ZINC') || rootSymbol.includes('ALU')) marginPercent = 0.16;
+
+                        requiredMargin = newOrderValue * marginPercent;
                     }
+
+                } else if (instrumentDetails.isFutures) {
+                    // 🟣 FUTURES RULE: SPAN + Exposure (Approx 12% - 18%)
+                    const marginPercent = isIndex ? 0.12 : 0.18;
+                    requiredMargin = newOrderValue * marginPercent;
+
+                } else if (instrumentDetails.isOptions) {
+                    if (order.side === 'BUY') {
+                        // 🟢 OPTION BUY: 100% Premium
+                        requiredMargin = newOrderValue;
+                    } else {
+                        // 🔴 OPTION SELL: SPAN + Exposure
+                        const lots = newUnits / lotSize;
+
+                        let marginPerLot = 0;
+                        if (isNifty) marginPerLot = 140000;      // ₹1.4L
+                        else if (isBankNifty) marginPerLot = 240000; // ₹2.4L
+                        else if (isFinNifty) marginPerLot = 100000;  // ₹1.0L
+                        else {
+                            marginPerLot = 200000;
+                        }
+
+                        // 🟢 HEDGE BENEFIT
+                        const hasHedge = positions.some(p =>
+                            p.quantity > 0 && // Long position
+                            p.symbol.includes(rootSymbol) &&
+                            (p.segment.includes('FNO') || p.segment.includes('NFO') || p.segment.includes('BFO'))
+                        );
+
+                        if (hasHedge) {
+                            requiredMargin = lots * (isIndex ? 50000 : 70000);
+                        } else {
+                            requiredMargin = lots * marginPerLot;
+                        }
+                    }
+                } else {
+                    // Commodity / Currency fallbacks
+                    requiredMargin = newOrderValue * 0.20;
                 }
 
                 // Determine isHedged for return
-                const rootSymbol = order.symbol.split(' ')[0];
                 const isHedged = (instrumentDetails.isOptions && order.side === 'SELL') ? positions.some(p =>
                     p.quantity > 0 &&
                     p.symbol.startsWith(rootSymbol) &&
@@ -1027,16 +1099,90 @@ export const useTradingStore = create<TradingStore>()(
             },
 
             updateAccountSummary: () => {
-
                 const { positions, account } = get();
-
                 const realizedPnl = positions.reduce((sum, pos) => sum + pos.realizedPnl, 0);
                 const unrealizedPnl = positions.reduce((sum, pos) => sum + pos.unrealizedPnl, 0);
                 const totalPnl = realizedPnl + unrealizedPnl;
 
+                // Re-calculate USED MARGIN for all open positions using the same logic as calculateMargin
+                // This ensures total used margin is accurate to the new rules
                 const usedMargin = positions.reduce((sum, pos) => {
-                    const positionValue = Math.abs(pos.quantity) * pos.ltp;
-                    return sum + (positionValue * 0.2); // Simplified margin calc
+                    const instrumentDetails = get().getInstrumentDetails(pos.symbol, pos.segment);
+                    const qty = Math.abs(pos.quantity);
+                    const isLong = pos.quantity > 0;
+                    const val = qty * pos.ltp; // Current Value
+
+                    if (instrumentDetails.isEquity) {
+                        // Equity: 20%
+                        return sum + (val * 0.20);
+                    } else if (instrumentDetails.isCommodity) {
+                        // MCX MARGIN
+                        const rootSymbol = pos.symbol.split(' ')[0].toUpperCase();
+                        if (instrumentDetails.isOptions) {
+                            if (isLong) return sum + val; // Buy = Premium
+                            else {
+                                // Sell = Fixed per lot
+                                const lotSize = instrumentDetails.lotSize || 1;
+                                const lots = qty / lotSize;
+                                let marginPerLot = 150000;
+                                if (rootSymbol.includes('CRUDE')) marginPerLot = 100000;
+                                else if (rootSymbol.includes('NATURALGAS')) marginPerLot = 150000;
+                                else if (rootSymbol.includes('GOLD')) marginPerLot = 150000;
+                                else if (rootSymbol.includes('SILVER')) marginPerLot = 200000;
+
+                                // Simple Hedge Check for Account Summary
+                                const hasHedge = positions.some(p =>
+                                    p.quantity > 0 &&
+                                    p.symbol.includes(rootSymbol) &&
+                                    p.exchange === 'MCX'
+                                );
+
+                                if (hasHedge) return sum + (lots * (marginPerLot * 0.25));
+                                return sum + (lots * marginPerLot);
+                            }
+                        } else {
+                            // Futures (MCX)
+                            let marginPercent = 0.15;
+                            if (rootSymbol.includes('CRUDE')) marginPercent = 0.20;
+                            else if (rootSymbol.includes('NATURALGAS')) marginPercent = 0.25;
+                            else if (rootSymbol.includes('GOLD')) marginPercent = 0.14;
+                            else if (rootSymbol.includes('SILVER')) marginPercent = 0.18;
+                            else if (rootSymbol.includes('COPPER')) marginPercent = 0.18;
+                            else if (rootSymbol.includes('ZINC')) marginPercent = 0.16;
+
+                            return sum + (val * marginPercent);
+                        }
+
+                    } else if (instrumentDetails.isFutures) {
+                        // Futures: 15%
+                        return sum + (val * 0.15);
+                    } else if (instrumentDetails.isOptions) {
+                        if (isLong) {
+                            // Option Buy: Cost (Premium Paid)
+                            return sum + val;
+                        } else {
+                            // Option Sell: Fixed per lot
+                            const lotSize = instrumentDetails.lotSize || 1;
+                            const lots = qty / lotSize;
+                            const rootSymbol = pos.symbol.split(' ')[0].toUpperCase();
+                            let marginPerLot = 200000;
+                            if (rootSymbol === 'NIFTY') marginPerLot = 140000;
+                            else if (rootSymbol === 'BANKNIFTY') marginPerLot = 240000;
+                            else if (rootSymbol === 'FINNIFTY') marginPerLot = 100000;
+
+                            // Simple Hedge Check
+                            const hasHedge = positions.some(p =>
+                                p.quantity > 0 &&
+                                p.symbol.includes(rootSymbol) &&
+                                (p.segment.includes('FNO') || p.segment.includes('NFO') || p.segment.includes('BFO'))
+                            );
+
+                            const isIndex = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX'].includes(rootSymbol);
+                            if (hasHedge) return sum + (lots * (isIndex ? 50000 : 70000));
+                            return sum + (lots * marginPerLot);
+                        }
+                    }
+                    return sum;
                 }, 0);
 
                 const availableMargin = account.totalCapital + realizedPnl - usedMargin;
@@ -1405,6 +1551,7 @@ export const useTradingStore = create<TradingStore>()(
                 watchlist: state.watchlist,
                 orders: state.orders,
                 positions: state.positions,
+                basket: state.basket,
                 tradeHistory: state.tradeHistory,
                 dailyStats: state.dailyStats,
                 account: state.account,

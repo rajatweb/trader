@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Search, Download, Settings, PieChart, ChevronDown, MoreVertical, TrendingUp, Info, Plus, Trash2, BarChart2, Bell, ExternalLink, Activity, ShoppingBag, Shield } from 'lucide-react';
+import { Search, Download, Settings, PieChart, ChevronDown, MoreVertical, TrendingUp, Info, Plus, Trash2, BarChart2, Bell, ExternalLink, Activity, ShoppingBag, Shield, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTradingStore, Position } from '@/lib/store';
 import OrderModal from '@/app/components/OrderModal';
 
 export default function PositionsPage() {
-    const { positions, account, closePosition } = useTradingStore();
+    const { positions, account, closePosition, convertPosition } = useTradingStore();
     const [searchTerm, setSearchTerm] = useState('');
     const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
     const [selectedPositions, setSelectedPositions] = useState<Set<string>>(new Set());
@@ -265,6 +265,22 @@ export default function PositionsPage() {
 
                                                                 {/* List Items - Only keep functional ones */}
                                                                 <div className="flex flex-col py-1">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const isEquity = pos.segment.includes('_EQ') || pos.segment === 'NSE_EQ' || pos.segment === 'BSE_EQ';
+                                                                            const carryType = isEquity ? 'CNC' : 'NRML';
+                                                                            const newType = pos.productType === 'MIS' ? carryType : 'MIS';
+
+                                                                            if (confirm(`Convert ${pos.symbol} from ${pos.productType} to ${newType}?`)) {
+                                                                                convertPosition(pos.securityId, newType as any);
+                                                                                setActiveMenuId(null);
+                                                                            }
+                                                                        }}
+                                                                        className="px-4 py-2 text-[12px] text-[#444] hover:bg-[#f5f5f5] hover:text-[#387ed1] flex items-center gap-3 transition-colors w-full text-left font-normal"
+                                                                    >
+                                                                        <span className="text-gray-400 w-4"><RefreshCcw size={13} /></span>
+                                                                        Convert to {pos.productType === 'MIS' ? (pos.segment.includes('_EQ') ? 'CNC' : 'NRML') : 'MIS'}
+                                                                    </button>
                                                                     {[
                                                                         { label: 'View Chart', icon: <Activity size={13} />, link: '#' },
                                                                         { label: 'Option Chain', icon: <ExternalLink size={13} />, link: '/apps/option-chain' },

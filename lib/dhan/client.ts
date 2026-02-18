@@ -53,7 +53,7 @@ export class DhanClient {
     }
 
     public async getOptionChainExpiry(underlyingScrip: number, underlyingSeg: string): Promise<string[]> {
-        // Expiry List API prefers PascalCase
+        // Expiry List API prefers PascalCase as per docs
         const res = await this.request<{ data: string[], status: string }>(DHAN_ENDPOINTS.PATHS.OPTION_CHAIN_EXPIRY, {
             method: 'POST',
             body: JSON.stringify({

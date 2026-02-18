@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, MoreHorizontal, TrendingUp, TrendingDown, RefreshCcw, Trash2 } from 'lucide-react';
 import { Reorder } from 'framer-motion';
+import Link from 'next/link';
 import OrderModal from './OrderModal';
 import { useTradingStore, useMarketFeed, WatchlistItem } from '@/lib/store';
 
@@ -277,9 +278,16 @@ function WatchlistItemRow({ item, handleOpenModal }: {
                     >
                         S
                     </button>
-                    <button className="text-[#666] p-1.5 hover:bg-gray-200 rounded transition border border-transparent hover:border-gray-300 ml-1">
+                    {/* <button className="text-[#666] p-1.5 hover:bg-gray-200 rounded transition border border-transparent hover:border-gray-300 ml-1">
                         <MoreHorizontal size={16} />
-                    </button>
+                    </button> */}
+                    <Link
+                        href={`/apps/option-chain?symbol=${item.symbol.split(' ')[0]}`}
+                        className="text-[#666] p-1.5 hover:bg-gray-200 rounded transition border border-transparent hover:border-gray-300 ml-1 flex items-center justify-center font-bold text-[10px]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        OC
+                    </Link>
                     <button
                         className="text-[#666] p-1.5 hover:text-red-500 hover:bg-red-50 rounded transition border border-transparent hover:border-red-100 ml-1"
                         onClick={(e) => {
