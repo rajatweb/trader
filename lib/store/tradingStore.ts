@@ -45,6 +45,7 @@ export interface Order {
     timestamp: number;
     executedAt?: number;
     rejectionReason?: string;
+    marginBlocked?: number;
 }
 
 export interface Position {
@@ -63,6 +64,7 @@ export interface Position {
     unrealizedPnl: number;
     totalPnl: number;
     lotSize: number; // Stored lot size
+    marginUsed: number; // Margin blocked for this position
 }
 
 export interface TradeLog {
@@ -575,6 +577,26 @@ export const useTradingStore = create<TradingStore>()(
                     return orderId;
                 }
 
+                // Add marginBlocked to order
+                newOrder.marginBlocked = marginCheck.requiredMargin;
+
+                // Deduct margin from available balance (block it)
+                if (marginCheck.requiredMargin > 0) {
+                    set(state => {
+                        const newUsed = state.account.usedMargin + marginCheck.requiredMargin;
+                        return {
+                            account: {
+                                ...state.account,
+                                availableMargin: state.account.totalCapital - newUsed, // Recalculate based on total - used
+                                usedMargin: newUsed,
+                                marginUtilization: state.account.totalCapital > 0
+                                    ? (newUsed / state.account.totalCapital) * 100
+                                    : 0
+                            }
+                        };
+                    });
+                }
+
                 // For paper trading, execute market orders immediately
                 if (orderData.orderType === 'MARKET') {
                     const watchlistItem = get().watchlist.find(w => w.securityId === orderData.securityId);
@@ -594,12 +616,34 @@ export const useTradingStore = create<TradingStore>()(
                 }
 
                 set((state) => ({ orders: [...state.orders, newOrder] }));
-                get().updateAccountSummary();
+                // get().updateAccountSummary();
 
                 return orderId;
             },
 
             cancelOrder: (orderId: string) => {
+                const orderToCancel = get().orders.find(o => o.orderId === orderId);
+
+                // If cancelling a pending/open order, release the blocked margin
+                if (orderToCancel && (orderToCancel.status === 'PENDING' || orderToCancel.status === 'OPEN')) {
+                    const blockedMargin = orderToCancel.marginBlocked || 0;
+                    if (blockedMargin > 0) {
+                        set(state => {
+                            const newUsed = state.account.usedMargin - blockedMargin;
+                            return {
+                                account: {
+                                    ...state.account,
+                                    availableMargin: state.account.totalCapital - newUsed,
+                                    usedMargin: newUsed,
+                                    marginUtilization: state.account.totalCapital > 0
+                                        ? (newUsed / state.account.totalCapital) * 100
+                                        : 0
+                                }
+                            };
+                        });
+                    }
+                }
+
                 set((state) => ({
                     orders: state.orders.map(order =>
                         order.orderId === orderId && (order.status === 'PENDING' || order.status === 'OPEN')
@@ -607,7 +651,6 @@ export const useTradingStore = create<TradingStore>()(
                             : order
                     )
                 }));
-                get().updateAccountSummary();
             },
 
             updateOrderStatus: (orderId: string, status: OrderStatus, filledQty?: number, avgPrice?: number) => {
@@ -1133,7 +1176,8 @@ export const useTradingStore = create<TradingStore>()(
                             realizedPnl: 0,
                             unrealizedPnl: 0,
                             totalPnl: 0,
-                            lotSize: lotSize
+                            lotSize: lotSize,
+                            marginUsed: order.marginBlocked || 0
                         };
 
                         return { positions: [...state.positions, newPosition] };
@@ -1145,12 +1189,10 @@ export const useTradingStore = create<TradingStore>()(
                         avgSellPrice = pos.avgSellPrice;
                     }
 
-                    // Update existing position (Logic block moved out to merge new/existing paths if desired, but here we are in 'else' block or similar structure)
-                    // Wait, I need to restructure to avoid 'pos' error.
-                    // Let's stick to map approach but cleaned up.
-
                     // Refactoring map to for loop to avoid closure mutation issues with TypeScript
                     const updatedPositions: Position[] = [];
+                    // Keep track of margin released to update account later
+                    let totalMarginReleased = 0;
 
                     for (const p of state.positions) {
                         if (p.securityId !== order.securityId) {
@@ -1161,6 +1203,13 @@ export const useTradingStore = create<TradingStore>()(
                         pos = p; // Capture current pos
                         const isBuy = order.side === 'BUY';
                         newQty = isBuy ? pos.quantity + orderActualQty : pos.quantity - orderActualQty;
+
+                        // Margin Logic
+                        let currentMarginUsed = pos.marginUsed || 0;
+                        // If we are ADDING to position (increasing absolute quantity), add blocked margin
+                        if ((isBuy && pos.quantity >= 0) || (!isBuy && pos.quantity <= 0)) {
+                            currentMarginUsed += (order.marginBlocked || 0);
+                        }
 
                         let currentRealizedPnl = 0;
                         realizedPnl = pos.realizedPnl;
@@ -1176,12 +1225,26 @@ export const useTradingStore = create<TradingStore>()(
                             if (pos.quantity < 0) {
                                 // Reducing SHORT position
                                 const closedQty = Math.min(orderActualQty, Math.abs(pos.quantity));
+
+                                // Calculate Margin Released
+                                const portionClosed = Math.abs(pos.quantity) > 0 ? (closedQty / Math.abs(pos.quantity)) : 0;
+                                const marginReleased = currentMarginUsed * portionClosed;
+                                currentMarginUsed -= marginReleased;
+                                totalMarginReleased += marginReleased;
+
                                 currentRealizedPnl = (pos.avgSellPrice - order.avgPrice) * closedQty;
                                 realizedPnl += currentRealizedPnl;
 
                                 if (isFlipping) {
                                     // Remaining part is new Long
                                     avgBuyPrice = order.avgPrice;
+                                    // Margin for new long part comes from order.marginBlocked? 
+                                    // Actually, calculateMargin returns 0 for reducing, so order.marginBlocked is 0.
+                                    // Wait, if Flipping, new margin IS required.
+                                    // calculateMargin handles flipping: returns margin valid for the EXCESS quantity.
+                                    // So order.marginBlocked has the margin for the new leg.
+                                    // We should add it to currentMarginUsed (which is close to 0 now).
+                                    currentMarginUsed += (order.marginBlocked || 0);
                                 }
                             } else {
                                 // Adding to LONG position
@@ -1193,12 +1256,20 @@ export const useTradingStore = create<TradingStore>()(
                             if (pos.quantity > 0) {
                                 // Reducing LONG position
                                 const closedQty = Math.min(orderActualQty, pos.quantity);
+
+                                // Calculate Margin Released
+                                const portionClosed = pos.quantity > 0 ? (closedQty / pos.quantity) : 0;
+                                const marginReleased = currentMarginUsed * portionClosed;
+                                currentMarginUsed -= marginReleased;
+                                totalMarginReleased += marginReleased;
+
                                 currentRealizedPnl = (order.avgPrice - pos.avgBuyPrice) * closedQty;
                                 realizedPnl += currentRealizedPnl;
 
                                 if (isFlipping) {
                                     // Remaining part is new Short
                                     avgSellPrice = order.avgPrice;
+                                    currentMarginUsed += (order.marginBlocked || 0);
                                 }
                             } else {
                                 // Adding to SHORT position (pos.quantity is negative or 0)
@@ -1232,6 +1303,7 @@ export const useTradingStore = create<TradingStore>()(
                         // Force quantity to 0 if it's very close (floating point fix)
                         if (Math.abs(newQty) < 0.001) {
                             newQty = 0;
+                            currentMarginUsed = 0; // Ensure 0 if closed
                         }
 
                         const unrealizedPnlForPos = newQty !== 0
@@ -1250,7 +1322,8 @@ export const useTradingStore = create<TradingStore>()(
                             ltp: finalLtp,
                             realizedPnl,
                             unrealizedPnl: unrealizedPnlForPos,
-                            totalPnl: realizedPnl + unrealizedPnlForPos
+                            totalPnl: realizedPnl + unrealizedPnlForPos,
+                            marginUsed: currentMarginUsed
                         });
                     }
 
@@ -1261,10 +1334,20 @@ export const useTradingStore = create<TradingStore>()(
                         netPnl = tradeLog.realizedPnl - charges;
 
                         // Update Account Balance immediately
+                        // Add Net PnL
+                        // Add Releaed Margin (if any)
+
+                        const newUsedMargin = state.account.usedMargin - totalMarginReleased;
+                        // availableMargin = totalCapital - usedMargin
+                        // totalCapital increases by netPnl
+
+                        const newTotalCapital = state.account.totalCapital + netPnl;
+
                         newAccount = {
                             ...state.account,
-                            totalCapital: state.account.totalCapital + netPnl,
-                            availableMargin: state.account.availableMargin + netPnl,
+                            totalCapital: newTotalCapital,
+                            availableMargin: newTotalCapital - newUsedMargin,
+                            usedMargin: newUsedMargin,
                             realizedPnl: state.account.realizedPnl + tradeLog.realizedPnl // Track gross realized too if needed, or net
                         };
 
