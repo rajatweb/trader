@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "7000:7000"
+      - "9000:9000"
     volumes:
       - .:/app
       - /app/node_modules
@@ -15,4 +15,4 @@ services:
       - "traefik.http.routers.next.rule=Host(`tader.rajatweb.com`)"
       - "traefik.http.routers.next.entrypoints=websecure"
       - "traefik.http.routers.next.tls=true"
-      - "traefik.http.services.next.loadbalancer.server.port=7000"
+      - "traefik.http.services.next.loadbalancer.server.port=9000"

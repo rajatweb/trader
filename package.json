@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "PORT=7000 node .next/standalone/server.js",
+    "build": "next build && mkdir -p .next/standalone/.next && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
+    "start": "if [ -f server.js ]; then PORT=9000 node server.js; else PORT=9000 node .next/standalone/server.js; fi",
     "lint": "eslint"
   },
   "dependencies": {
