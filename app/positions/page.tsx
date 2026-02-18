@@ -47,23 +47,23 @@ export default function PositionsPage() {
     return (
         <div className="flex flex-col h-full bg-white text-[#444]">
             {/* Header / Toolbar */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-white">
+            <div className="flex flex-col md:flex-row md:items-center justify-between px-5 py-3 border-b border-gray-100 bg-white gap-4 md:gap-0">
                 <h1 className="text-xl font-light text-[#444] flex items-center gap-2">
                     Positions <span className="text-gray-400 font-light text-lg">({positions.length})</span>
                 </h1>
 
-                <div className="flex items-center gap-6">
-                    <div className="relative">
+                <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
+                    <div className="relative w-full md:w-auto">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={13} />
                         <input
                             type="text"
                             placeholder="Search"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-8 pr-4 py-1 border border-gray-200 rounded-sm text-xs text-[#444] focus:outline-none focus:border-gray-400 w-48 bg-white placeholder:text-gray-400"
+                            className="pl-8 pr-4 py-1 border border-gray-200 rounded-sm text-xs text-[#444] focus:outline-none focus:border-gray-400 w-full md:w-48 bg-white placeholder:text-gray-400"
                         />
                     </div>
-                    <div className="flex gap-4 text-xs font-medium text-[#387ed1]">
+                    <div className="hidden md:flex gap-4 text-xs font-medium text-[#387ed1]">
                         <button className="flex items-center gap-1 hover:text-blue-600 transition-colors">
                             <PieChart size={12} strokeWidth={2.5} /> Analytics
                         </button>
@@ -89,7 +89,7 @@ export default function PositionsPage() {
                 ) : (
                     <>
                         {/* Positions Table */}
-                        <div className="w-full">
+                        <div className="w-full overflow-x-auto pointer-events-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-[#fcfcfc] text-gray-500 text-[11px] border-b border-gray-100">
                                     <tr>

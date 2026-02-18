@@ -23,7 +23,7 @@ export default function Dashboard() {
     }, [account, positions]);
 
     return (
-        <div className="flex-1 h-full overflow-y-auto p-12 custom-scrollbar">
+        <div className="flex-1 h-full overflow-y-auto p-6 md:p-12 custom-scrollbar">
 
             {/* Header Greeting */}
             <div className="mb-10 flex items-center justify-between">

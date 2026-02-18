@@ -60,8 +60,8 @@ export default function OrdersPage() {
     return (
         <div className="flex flex-col h-full bg-white">
             {/* Sub-navigation */}
-            <div className="flex items-center justify-between px-8 py-4 border-b border-gray-100">
-                <div className="flex gap-8">
+            <div className="flex items-center justify-between px-8 py-4 border-b border-gray-100 overflow-x-auto">
+                <div className="flex gap-8 whitespace-nowrap">
                     {['All Orders', 'Open Orders', 'GTT', 'Baskets'].map((tab) => (
                         <button
                             key={tab}
@@ -75,7 +75,7 @@ export default function OrdersPage() {
             </div>
 
             {/* Content Area */}
-            <div className="p-8 flex-1 overflow-auto">
+            <div className="p-4 md:p-8 flex-1 overflow-auto">
                 {(activeTab === 'All Orders' || activeTab === 'Open Orders') && (
                     <>
                         <h2 className="text-xl font-light text-[#444] mb-4 flex items-center gap-2">
@@ -84,14 +84,14 @@ export default function OrdersPage() {
 
                         {/* Status Filter Tabs - Only for All Orders */}
                         {activeTab === 'All Orders' && (
-                            <div className="flex gap-4 mb-4 border-b border-gray-200">
+                            <div className="flex gap-4 mb-4 border-b border-gray-200 overflow-x-auto whitespace-nowrap pb-2 md:pb-0">
                                 {['All', 'EXECUTED', 'OPEN', 'CANCELLED', 'REJECTED'].map((status) => (
                                     <button
                                         key={status}
                                         onClick={() => setStatusFilter(status)}
                                         className={`pb-2 px-1 text-xs font-medium transition-colors border-b-2 ${statusFilter === status
-                                                ? 'text-[#387ed1] border-[#387ed1]'
-                                                : 'text-gray-500 border-transparent hover:text-gray-700'
+                                            ? 'text-[#387ed1] border-[#387ed1]'
+                                            : 'text-gray-500 border-transparent hover:text-gray-700'
                                             }`}
                                     >
                                         {status}
@@ -100,18 +100,18 @@ export default function OrdersPage() {
                             </div>
                         )}
 
-                        <div className="mb-4 flex justify-between items-center">
-                            <div className="relative">
+                        <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div className="relative w-full md:w-auto">
                                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={14} />
                                 <input
                                     type="text"
                                     placeholder="Search"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="pl-9 pr-4 py-1.5 border border-gray-200 rounded text-sm text-gray-600 focus:outline-none focus:border-gray-400 w-64"
+                                    className="pl-9 pr-4 py-1.5 border border-gray-200 rounded text-sm text-gray-600 focus:outline-none focus:border-gray-400 w-full md:w-64"
                                 />
                             </div>
-                            <div className="flex gap-4 text-xs text-[#387ed1] font-medium cursor-pointer">
+                            <div className="hidden md:flex gap-4 text-xs text-[#387ed1] font-medium cursor-pointer">
                                 <span className="flex items-center gap-1 hover:text-blue-700"><Download size={12} /> Contract note</span>
                                 <span className="flex items-center gap-1 hover:text-blue-700"><Download size={12} /> View history</span>
                                 <span className="flex items-center gap-1 hover:text-blue-700"><Download size={12} /> Download</span>
@@ -125,8 +125,8 @@ export default function OrdersPage() {
                                 <p className="text-xs mt-2">Your order history will appear here</p>
                             </div>
                         ) : (
-                            <div className="border border-gray-200 rounded-sm">
-                                <table className="w-full text-left text-xs">
+                            <div className="border border-gray-200 rounded-sm overflow-x-auto">
+                                <table className="w-full text-left text-xs min-w-[800px]">
                                     <thead className="bg-[#f9f9f9] text-gray-500 border-b border-gray-200">
                                         <tr>
                                             <th className="px-6 py-3 font-medium">Time</th>

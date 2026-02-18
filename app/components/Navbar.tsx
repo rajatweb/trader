@@ -1,12 +1,17 @@
 'use client';
 
-import { Bell, ShoppingBag, User, Plug, CheckCircle2 } from 'lucide-react';
+import { Bell, ShoppingBag, User, Plug, CheckCircle2, Menu } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useTradingStore } from '@/lib/store';
 
-export default function Navbar() {
+interface NavbarProps {
+    onToggleSidebar?: () => void;
+    isSidebarOpen?: boolean;
+}
+
+export default function Navbar({ onToggleSidebar }: NavbarProps) {
     const pathname = usePathname();
     const { isConnected, brokerCredentials, disconnectBroker, performDailySettlement } = useTradingStore();
     const [showDropdown, setShowDropdown] = useState(false);
@@ -20,7 +25,16 @@ export default function Navbar() {
         <nav className="h-[60px] bg-white border-b border-[#e0e0e0] flex items-center justify-between px-6 shadow-sm sticky top-0 z-50">
 
             {/* Index Summary */}
-            <div className="flex items-center gap-6 text-sm">
+            {/* Mobile Menu Button */}
+            <button
+                className="md:hidden mr-4 p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                onClick={onToggleSidebar}
+            >
+                <Menu size={20} />
+            </button>
+
+            {/* Index Summary - Hidden on small mobile, visible on larger */}
+            <div className="hidden sm:flex items-center gap-6 text-sm">
                 <div className="flex items-center gap-2">
                     <span className="font-semibold text-[#444]">NIFTY 50</span>
                     <span className="text-emerald-500 font-medium">25682.75</span>
@@ -36,8 +50,8 @@ export default function Navbar() {
             {/* Logo */}
 
 
-            {/* Navigation Links */}
-            <div className="flex items-center gap-8 text-sm text-[#666]">
+            {/* Navigation Links - Hidden on Mobile, Visible on Desktop */}
+            <div className="hidden md:flex items-center gap-8 text-sm text-[#666]">
                 {[
                     { name: 'Dashboard', href: '/' },
                     { name: 'Orders', href: '/orders' },

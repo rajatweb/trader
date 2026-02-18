@@ -11,8 +11,8 @@ export default function BidsPage() {
     return (
         <div className="flex flex-col h-full bg-white text-[#444]">
             {/* Sub-navigation */}
-            <div className="flex items-center justify-between px-8 py-4 border-b border-gray-100">
-                <div className="flex gap-8">
+            <div className="flex items-center justify-between px-4 md:px-8 py-4 border-b border-gray-100 overflow-x-auto">
+                <div className="flex gap-8 whitespace-nowrap">
                     {tabs.map((tab) => (
                         <button
                             key={tab}
@@ -25,7 +25,7 @@ export default function BidsPage() {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-auto p-8 flex flex-col items-center justify-center text-center">
+            <div className="flex-1 overflow-auto p-4 md:p-8 flex flex-col items-center justify-center text-center">
                 {activeTab === 'Auctions' && (
                     <div className="max-w-md">
                         <div className="w-24 h-24 bg-orange-50 rounded-full flex items-center justify-center mx-auto mb-6">

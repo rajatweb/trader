@@ -23,16 +23,16 @@ export default function FundsPage() {
     };
 
     return (
-        <div className="flex-1 bg-[#f9f9f9] h-full overflow-y-auto p-8 text-[#444]">
+        <div className="flex-1 bg-[#f9f9f9] h-full overflow-y-auto p-4 md:p-8 text-[#444]">
 
             {/* Header */}
-            <div className="flex justify-between items-center mb-8 max-w-5xl">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 md:mb-8 max-w-5xl gap-4 md:gap-0">
                 <h1 className="text-xl font-light text-[#444] flex items-center gap-2">
                     Funds
                 </h1>
                 <button
                     onClick={handleReset}
-                    className="flex items-center gap-2 text-xs font-medium text-red-500 hover:text-red-600 transition-colors bg-white border border-red-100 px-3 py-1.5 rounded shadow-sm"
+                    className="flex items-center gap-2 text-xs font-medium text-red-500 hover:text-red-600 transition-colors bg-white border border-red-100 px-3 py-1.5 rounded shadow-sm w-full md:w-auto justify-center"
                 >
                     <RotateCcw size={14} /> Reset Account
                 </button>

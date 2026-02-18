@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useTradingStore } from './tradingStore';
 import { DhanFeedClient, MarketDataUpdate } from '@/lib/dhan/websocket-client';
 
@@ -30,6 +30,70 @@ export function useMarketFeed() {
 
         return () => clearInterval(interval);
     }, [checkAutoSquareOff]);
+
+    const handleError = useCallback((error: string) => {
+        console.error('Market Feed Error:', error);
+    }, []);
+
+    // Check if any pending limit/SL orders should be executed
+    const checkPendingOrders = useCallback((updates: MarketDataUpdate[]) => {
+        const pendingOrders = getPendingOrders();
+
+        pendingOrders.forEach(order => {
+            const update = updates.find(u => String(u.securityId) === order.securityId);
+            if (!update || !update.ltp) return;
+
+            const ltp = update.ltp;
+            let shouldExecute = false;
+            let executionPrice = ltp;
+
+            const triggerPrice = order.triggerPrice || order.price;
+
+            // Check execution conditions based on order type
+            if (order.orderType === 'LIMIT') {
+                if (order.side === 'BUY' && ltp <= order.price) {
+                    shouldExecute = true;
+                    executionPrice = order.price;
+                } else if (order.side === 'SELL' && ltp >= order.price) {
+                    shouldExecute = true;
+                    executionPrice = order.price;
+                }
+            } else if (order.orderType === 'SL' || order.orderType === 'SL-M') {
+
+                if (order.side === 'BUY' && ltp >= triggerPrice) {
+                    shouldExecute = true;
+                    executionPrice = order.orderType === 'SL-M' ? ltp : order.price;
+                } else if (order.side === 'SELL' && ltp <= triggerPrice) {
+                    shouldExecute = true;
+                    executionPrice = order.orderType === 'SL-M' ? ltp : order.price;
+                }
+            }
+
+            if (shouldExecute) {
+                updateOrderStatus(order.orderId, 'EXECUTED', order.quantity, executionPrice);
+            }
+        });
+    }, [getPendingOrders, updateOrderStatus]);
+
+    // Handle market data updates
+    const handleMarketUpdates = useCallback((updates: MarketDataUpdate[]) => {
+        // Convert updates to watchlist format
+        const priceUpdates = updates.map(update => ({
+            securityId: String(update.securityId),
+            ltp: update.ltp,
+            prevClose: update.prevClose,
+            open: update.open,
+            high: update.high,
+            low: update.low,
+            volume: update.volume
+        }));
+
+        // Update watchlist and positions
+        updateWatchlistPrices(priceUpdates);
+
+        // Check pending orders for execution
+        checkPendingOrders(updates);
+    }, [updateWatchlistPrices, checkPendingOrders]);
 
     useEffect(() => {
         // Only connect if broker is connected and we have instruments
@@ -72,70 +136,7 @@ export function useMarketFeed() {
             client.disconnect();
             feedClientRef.current = null;
         };
-    }, [isConnected, watchlist.length, positions.length]);
-
-    // Handle market data updates
-    const handleMarketUpdates = (updates: MarketDataUpdate[]) => {
-        // Convert updates to watchlist format
-        const priceUpdates = updates.map(update => ({
-            securityId: String(update.securityId),
-            ltp: update.ltp,
-            prevClose: update.prevClose,
-            open: update.open,
-            high: update.high,
-            low: update.low,
-            volume: update.volume
-        }));
-
-        // Update watchlist and positions
-        updateWatchlistPrices(priceUpdates);
-
-        // Check pending orders for execution
-        checkPendingOrders(updates);
-    };
-
-    // Check if any pending limit/SL orders should be executed
-    const checkPendingOrders = (updates: MarketDataUpdate[]) => {
-        const pendingOrders = getPendingOrders();
-
-        pendingOrders.forEach(order => {
-            const update = updates.find(u => String(u.securityId) === order.securityId);
-            if (!update || !update.ltp) return;
-
-            const ltp = update.ltp;
-            let shouldExecute = false;
-            let executionPrice = ltp;
-
-            // Check execution conditions based on order type
-            if (order.orderType === 'LIMIT') {
-                if (order.side === 'BUY' && ltp <= order.price) {
-                    shouldExecute = true;
-                    executionPrice = order.price;
-                } else if (order.side === 'SELL' && ltp >= order.price) {
-                    shouldExecute = true;
-                    executionPrice = order.price;
-                }
-            } else if (order.orderType === 'SL' || order.orderType === 'SL-M') {
-                const triggerPrice = order.triggerPrice || order.price;
-
-                if (order.side === 'BUY' && ltp >= triggerPrice) {
-                    shouldExecute = true;
-                    executionPrice = order.orderType === 'SL-M' ? ltp : order.price;
-                } else if (order.side === 'SELL' && ltp <= triggerPrice) {
-                    shouldExecute = true;
-                    executionPrice = order.orderType === 'SL-M' ? ltp : order.price;
-                }
-            }
-
-            if (shouldExecute) {
-                updateOrderStatus(order.orderId, 'EXECUTED', order.quantity, executionPrice);
-            }
-        });
-    };
-
-    const handleError = (error: string) => {
-        console.error('Market Feed Error:', error);
-    };
+    }, [isConnected, watchlist.length, positions.length, brokerCredentials, handleMarketUpdates, handleError, setFeedStatus]);
 
     return {
         isConnected: feedClientRef.current !== null,

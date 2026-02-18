@@ -89,7 +89,7 @@ export default function MarketWatch() {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white border-r border-[#e0e0e0] w-[380px] shrink-0 shadow-[2px_0_5px_rgba(0,0,0,0.02)] z-10 relative">
+        <div className="flex flex-col h-full bg-white w-full relative">
             <OrderModal
                 isOpen={modalConfig.isOpen}
                 onClose={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
@@ -104,7 +104,7 @@ export default function MarketWatch() {
             {/* Connection Status */}
             {(feedStatus === 'CONNECTING' || feedStatus === 'DISCONNECTED') && isConnected && (
                 <div className={`border-b px-3 py-1.5 text-xs flex items-center gap-2 ${feedStatus === 'CONNECTING' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' :
-                        'bg-red-50 border-red-200 text-red-800'
+                    'bg-red-50 border-red-200 text-red-800'
                     }`}>
                     <div className={`w-2 h-2 rounded-full ${feedStatus === 'CONNECTING' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
                     {feedStatus === 'CONNECTING' ? 'Connecting to live feed...' : 'Feed Disconnected'}
