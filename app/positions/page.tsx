@@ -139,8 +139,8 @@ export default function PositionsPage() {
                         <div className="w-full overflow-x-auto pointer-events-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-[#fcfcfc] text-gray-500 text-[11px] border-b border-gray-100">
-                                    <tr>
-                                        <th className="px-5 py-3 w-10 font-medium border-b border-gray-100">
+                                    <tr className="border-b border-gray-100">
+                                        <th className="px-5 py-3 w-10 font-medium">
                                             <input
                                                 type="checkbox"
                                                 className="accent-[#387ed1] w-3 h-3 cursor-pointer"
@@ -149,15 +149,14 @@ export default function PositionsPage() {
                                                 disabled={filteredPositions.filter(p => p.quantity !== 0).length === 0}
                                             />
                                         </th>
-                                        <th className="px-3 py-3 font-medium border-b border-gray-100">Product</th>
-                                        <th className="px-3 py-3 font-medium border-b border-gray-100">Instrument</th>
-                                        <th className="px-3 py-3 font-medium text-right border-b border-gray-100">Qty.</th>
-                                        <th className="px-3 py-3 font-medium text-right border-b border-gray-100">Avg.</th>
-                                        <th className="px-3 py-3 font-medium text-right border-b border-gray-100">LTP</th>
-                                        <th className="px-3 py-3 font-medium text-right border-b border-gray-100">P&L</th>
-                                        <th className="px-5 py-3 font-medium text-right border-b border-gray-100">Chg.</th>
-                                        <th className="w-10 border-b border-gray-100"></th> {/* Menu Column */}
-                                    </tr>
+                                        <th className="px-3 py-3 font-medium">Product</th>
+                                        <th className="px-3 py-3 font-medium">Instrument</th>
+                                        <th className="px-3 py-3 font-medium text-right">Qty.</th>
+                                        <th className="px-3 py-3 font-medium text-right">Avg.</th>
+                                        <th className="px-3 py-3 font-medium text-right">LTP</th>
+                                        <th className="px-3 py-3 font-medium text-right">P&L</th>
+                                        <th className="px-5 py-3 font-medium text-right">Chg.</th>
+                                        <th className="w-10"></th></tr>
                                 </thead>
                                 <tbody className="text-xs text-[#444]">
                                     {filteredPositions.map((pos) => {
@@ -199,7 +198,6 @@ export default function PositionsPage() {
                                                 <td className="px-5 py-3 text-right text-gray-400 text-[11px]">
                                                     {pos.quantity !== 0 ? `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%` : '-'}
                                                 </td>
-                                                {/* Action Menu Cell */}
                                                 <td className="px-2 py-3 text-right relative w-10">
                                                     <button
                                                         onClick={(e) => {
@@ -287,19 +285,16 @@ export default function PositionsPage() {
                                                             </div>
                                                         )}
                                                     </AnimatePresence>
-                                                </td>
-                                            </tr>
+                                                </td></tr>
                                         );
                                     })}
 
-                                    {/* Total Row */}
                                     <tr className="bg-white">
                                         <td colSpan={6} className="px-3 py-4 text-right font-medium text-gray-500 text-[13px]">Total P&L</td>
                                         <td className={`px-3 py-4 text-right font-semibold text-[15px] ${totalPnL >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
                                             {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toFixed(2)}
                                         </td>
-                                        <td colSpan={2}></td>
-                                    </tr>
+                                        <td colSpan={2}></td></tr>
                                 </tbody>
                             </table>
                         </div>

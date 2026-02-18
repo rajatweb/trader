@@ -58,33 +58,56 @@ export default function OrdersPage() {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white">
-            {/* Sub-navigation */}
-            <div className="flex items-center justify-between px-8 py-4 border-b border-gray-100 overflow-x-auto">
-                <div className="flex gap-8 whitespace-nowrap">
-                    {['All Orders', 'Open Orders', 'GTT', 'Baskets'].map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab)}
-                            className={`text-sm font-medium transition-colors ${activeTab === tab ? 'text-[#ff5722]' : 'text-gray-500 hover:text-[#ff5722]'}`}
-                        >
-                            {tab}
+        <div className="flex flex-col h-full bg-white text-[#444]">
+            {/* Header / Toolbar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between px-5 py-3 border-b border-gray-100 bg-white gap-4 md:gap-0">
+                <div className="flex items-center gap-4">
+                    <h1 className="text-xl font-light text-[#444] flex items-center gap-2">
+                        Orders <span className="text-gray-400 font-light text-lg">({filteredOrders.length})</span>
+                    </h1>
+                    {/* Sub-navigation inline */}
+                    <div className="hidden md:flex items-center gap-1 ml-4 border-l border-gray-200 pl-4">
+                        {['All Orders', 'Open Orders'].map((tab) => (
+                            <button
+                                key={tab}
+                                onClick={() => setActiveTab(tab)}
+                                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${activeTab === tab ? 'bg-blue-50 text-[#387ed1]' : 'text-gray-500 hover:bg-gray-50'}`}
+                            >
+                                {tab}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
+                    <div className="relative w-full md:w-auto">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={13} />
+                        <input
+                            type="text"
+                            placeholder="Search orders"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="pl-8 pr-4 py-1 border border-gray-200 rounded-sm text-xs text-[#444] focus:outline-none focus:border-gray-400 w-full md:w-48 bg-white placeholder:text-gray-400"
+                        />
+                    </div>
+                    <div className="hidden md:flex gap-4 text-xs font-medium text-[#387ed1]">
+                        <button className="flex items-center gap-1 hover:text-blue-600 transition-colors">
+                            <Clock size={12} strokeWidth={2.5} /> History
                         </button>
-                    ))}
+                        <button className="flex items-center gap-1 hover:text-blue-600 transition-colors">
+                            <Download size={12} strokeWidth={2.5} /> Contract Note
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Content Area */}
-            <div className="p-4 md:p-8 flex-1 overflow-auto">
+            <div className="flex-1 overflow-auto p-0">
                 {(activeTab === 'All Orders' || activeTab === 'Open Orders') && (
                     <>
-                        <h2 className="text-xl font-light text-[#444] mb-4 flex items-center gap-2">
-                            {activeTab} <span className="text-gray-400">({filteredOrders.length})</span>
-                        </h2>
-
                         {/* Status Filter Tabs - Only for All Orders */}
                         {activeTab === 'All Orders' && (
-                            <div className="flex gap-4 mb-4 border-b border-gray-200 overflow-x-auto whitespace-nowrap pb-2 md:pb-0">
+                            <div className="flex gap-4 mb-4 px-5 py-3 border-b border-gray-100 overflow-x-auto whitespace-nowrap">
                                 {['All', 'EXECUTED', 'OPEN', 'CANCELLED', 'REJECTED'].map((status) => (
                                     <button
                                         key={status}
@@ -99,24 +122,6 @@ export default function OrdersPage() {
                                 ))}
                             </div>
                         )}
-
-                        <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                            <div className="relative w-full md:w-auto">
-                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={14} />
-                                <input
-                                    type="text"
-                                    placeholder="Search"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="pl-9 pr-4 py-1.5 border border-gray-200 rounded text-sm text-gray-600 focus:outline-none focus:border-gray-400 w-full md:w-64"
-                                />
-                            </div>
-                            <div className="hidden md:flex gap-4 text-xs text-[#387ed1] font-medium cursor-pointer">
-                                <span className="flex items-center gap-1 hover:text-blue-700"><Download size={12} /> Contract note</span>
-                                <span className="flex items-center gap-1 hover:text-blue-700"><Download size={12} /> View history</span>
-                                <span className="flex items-center gap-1 hover:text-blue-700"><Download size={12} /> Download</span>
-                            </div>
-                        </div>
 
                         {filteredOrders.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-64 text-gray-400">
@@ -137,9 +142,7 @@ export default function OrdersPage() {
                                             <th className="px-6 py-3 font-medium text-right">Price</th>
                                             <th className="px-6 py-3 font-medium text-right">Trigger</th>
                                             <th className="px-6 py-3 font-medium text-right">Avg. price</th>
-                                            <th className="px-6 py-3 font-medium text-right">Status</th>
-                                            {activeTab === 'Open Orders' && <th className="px-6 py-3 font-medium text-right">Actions</th>}
-                                        </tr>
+                                            <th className="px-6 py-3 font-medium text-right">Status</th>{activeTab === 'Open Orders' && <th className="px-6 py-3 font-medium text-right">Actions</th>}</tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {filteredOrders.map((order) => (

@@ -70,7 +70,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
                 ))}
 
                 <div className="flex items-center gap-4 border-l border-[#eee] pl-4 ml-2">
-                    <Link href="/apps" className="hover:text-[#ff5722]"><ShoppingBag size={18} /></Link>
+                    <Link href="/" className="hover:text-[#ff5722]"><ShoppingBag size={18} /></Link>
                     <button className="hover:text-[#ff5722] relative">
                         <Bell size={18} />
                         <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>

@@ -65,6 +65,7 @@ export interface Position {
     totalPnl: number;
     lotSize: number; // Stored lot size
     marginUsed: number; // Margin blocked for this position
+    isHedged?: boolean; // Indicates if the position is part of a hedge
 }
 
 export interface TradeLog {
