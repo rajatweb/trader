@@ -136,7 +136,7 @@ export default function PositionsPage() {
                 ) : (
                     <>
                         {/* Positions Table */}
-                        <div className="w-full overflow-x-auto pointer-events-auto">
+                        <div className="w-full h-full overflow-x-auto pointer-events-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-[#fcfcfc] text-gray-500 text-[11px] border-b border-gray-100">
                                     <tr className="border-b border-gray-100">
