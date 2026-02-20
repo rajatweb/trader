@@ -140,7 +140,7 @@ const LOT_SIZE_MAP: Record<string, number> = {
     'BANKNIFTY': 30,
     'FINNIFTY': 40,
     'MIDCPNIFTY': 75,
-    'SENSEX': 10,
+    'SENSEX': 20,
     'BANKEX': 15,
 
     // Commodity Options (MCX)
