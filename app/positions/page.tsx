@@ -227,11 +227,16 @@ export default function PositionsPage() {
                                                                                     ? pos.ltp * 0.98  // 2% below for long
                                                                                     : pos.ltp * 1.02; // 2% above for short
 
+                                                                                // SL Limit Price should be below/above trigger price
+                                                                                const suggestedLimit = isLong
+                                                                                    ? suggestedTrigger * 0.998 // 0.2% below trigger
+                                                                                    : suggestedTrigger * 1.002; // 0.2% above trigger
+
                                                                                 setOrderModalConfig({
                                                                                     isOpen: true,
                                                                                     type: isLong ? 'Sell' : 'Buy', // Opposite of position
                                                                                     symbol: pos.symbol,
-                                                                                    price: pos.ltp,
+                                                                                    price: Number(suggestedLimit.toFixed(2)),
                                                                                     securityId: pos.securityId,
                                                                                     exchange: pos.exchange as any,
                                                                                     segment: pos.segment,

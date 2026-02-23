@@ -356,6 +356,38 @@ export default function OrderModal({
                                     triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
                                 };
 
+                                // Validate SL order rules to prevent immediate "cutting" of position
+                                if (['SL', 'SL-M'].includes(orderType)) {
+                                    if (triggerPrice <= 0) {
+                                        setError('Invalid trigger price');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                    if (!isBuy && triggerPrice >= livePrice) {
+                                        setError('Trigger price must be lower than LTP for Sell SL');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                    if (isBuy && triggerPrice <= livePrice) {
+                                        setError('Trigger price must be higher than LTP for Buy SL');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                }
+
+                                if (orderType === 'SL') {
+                                    if (!isBuy && limitPrice > triggerPrice) {
+                                        setError('Limit price must be <= trigger price for Sell SL');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                    if (isBuy && limitPrice < triggerPrice) {
+                                        setError('Limit price must be >= trigger price for Buy SL');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                }
+
                                 // Validate margin
                                 const marginCheck = calculateMargin(orderData);
                                 if (!marginCheck.sufficient) {
