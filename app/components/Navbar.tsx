@@ -51,7 +51,8 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
                     { name: 'Positions', href: '/positions' },
                     { name: 'Bids', href: '/bids' },
                     { name: 'Funds', href: '/funds' },
-                    { name: 'Console', href: '/console' }
+                    { name: 'Backtest', href: '/apps/backtest' },
+                    { name: 'Console', href: '/console' },
                 ].map((item) => (
                     <Link
                         key={item.href}

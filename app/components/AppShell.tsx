@@ -11,6 +11,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const pathname = usePathname();
 
+    // Isolated Layout Exemption for Backtest Pro
+    if (pathname && pathname.startsWith('/apps/backtest')) {
+        return <>{children}</>;
+    }
+
     const links = [
         { name: 'Dashboard', href: '/' },
         { name: 'Orders', href: '/orders' },
@@ -55,8 +60,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     href={item.href}
                                     onClick={() => setSidebarOpen(false)}
                                     className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${pathname === item.href
-                                            ? 'bg-blue-50 text-blue-600'
-                                            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                                        ? 'bg-blue-50 text-blue-600'
+                                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                                         }`}
                                 >
                                     {item.name}
