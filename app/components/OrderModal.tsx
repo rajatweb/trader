@@ -19,6 +19,7 @@ interface OrderModalProps {
     prefilledOrderType?: 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
     prefilledQuantity?: number;
     prefilledTriggerPrice?: number;
+    prefilledProductType?: ProductType;
     // For modifying existing orders
     existingOrderId?: string;
 }
@@ -35,6 +36,7 @@ export default function OrderModal({
     prefilledOrderType,
     prefilledQuantity,
     prefilledTriggerPrice,
+    prefilledProductType,
     existingOrderId
 }: OrderModalProps) {
     const { placeOrder, calculateMargin, account, watchlist, cancelOrder, getInstrumentDetails } = useTradingStore();
@@ -85,8 +87,11 @@ export default function OrderModal({
 
             if (prefilledTriggerPrice) setTriggerPrice(Number(prefilledTriggerPrice.toFixed(2)));
             else setTriggerPrice(0);
+
+            if (prefilledProductType) setProduct(prefilledProductType);
+            else setProduct('MIS');
         }
-    }, [isOpen, price, type, prefilledOrderType, prefilledQuantity, prefilledTriggerPrice]);
+    }, [isOpen, price, type, prefilledOrderType, prefilledQuantity, prefilledTriggerPrice, prefilledProductType]);
 
     // Use side instead of type for logic
     const isBuy = side === 'Buy';
@@ -346,15 +351,29 @@ export default function OrderModal({
                                     side: (isBuy ? 'BUY' : 'SELL') as any,
                                     orderType: orderType as any,
                                     productType: product as any,
-                                    quantity: instrumentInfo.isEquity ? qty : qty, // Pass raw quantity, store handles lot multiplication? 
-                                    // Wait, implementation says: "quantity: qty". But UI says "Lots" for F&O.
-                                    // Store expects "quantity" as LOTS for F&O in placeOrder?
-                                    // Checked store: placeOrder -> calculateMargin uses (order.quantity * lotSize) if F&O.
-                                    // So we shout pass LOTS if user input is lots.
-                                    // Yes, `qty` here IS lots for options.
+                                    quantity: qty,
                                     price: orderType === 'MARKET' ? livePrice : limitPrice,
                                     triggerPrice: ['SL', 'SL-M'].includes(orderType) ? triggerPrice : undefined
                                 };
+
+                                // Validate SL prices to prevent immediate triggering
+                                if (orderType === 'SL' || orderType === 'SL-M') {
+                                    if (triggerPrice <= 0) {
+                                        setError('Trigger price must be greater than 0');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                    if (isBuy && triggerPrice <= livePrice) {
+                                        setError('For Buy SL, trigger price must be above current price');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                    if (!isBuy && triggerPrice >= livePrice) {
+                                        setError('For Sell SL, trigger price must be below current price');
+                                        setIsPlacing(false);
+                                        return;
+                                    }
+                                }
 
                                 // Validate margin
                                 const marginCheck = calculateMargin(orderData);

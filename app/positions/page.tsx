@@ -47,7 +47,8 @@ export default function PositionsPage() {
         segment: '',
         prefilledOrderType: 'SL' as 'MARKET' | 'LIMIT' | 'SL' | 'SL-M',
         prefilledQuantity: 0,
-        prefilledTriggerPrice: 0
+        prefilledTriggerPrice: 0,
+        prefilledProductType: 'MIS' as any
     });
 
     const totalPnL = positions.reduce((acc, curr) => acc + curr.totalPnl, 0);
@@ -237,7 +238,8 @@ export default function PositionsPage() {
                                                                                     segment: pos.segment,
                                                                                     prefilledOrderType: 'SL',
                                                                                     prefilledQuantity: Math.abs(pos.quantity / pos.lotSize),
-                                                                                    prefilledTriggerPrice: Number(suggestedTrigger.toFixed(2))
+                                                                                    prefilledTriggerPrice: Number(suggestedTrigger.toFixed(2)),
+                                                                                    prefilledProductType: pos.productType as any
                                                                                 });
                                                                                 setActiveMenuId(null);
                                                                             }}
@@ -332,6 +334,7 @@ export default function PositionsPage() {
                 prefilledOrderType={orderModalConfig.prefilledOrderType}
                 prefilledQuantity={orderModalConfig.prefilledQuantity}
                 prefilledTriggerPrice={orderModalConfig.prefilledTriggerPrice}
+                prefilledProductType={orderModalConfig.prefilledProductType}
             />
         </div>
     );

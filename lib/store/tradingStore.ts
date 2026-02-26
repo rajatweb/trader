@@ -322,6 +322,17 @@ const calculateLegCharges = (
     let stampDuty = 0;
 
     const turnover = price * quantity;
+    if (turnover <= 0 || quantity <= 0) {
+        return {
+            total: 0,
+            brokerage: 0,
+            stt: 0,
+            exchangeTxn: 0,
+            gst: 0,
+            sebi: 0,
+            stampDuty: 0
+        };
+    }
     const { isEquity, isFutures, isOptions } = instrumentType;
 
     // 1. BROKERAGE (Flat ₹20 per executed order, free for Equity Delivery)
