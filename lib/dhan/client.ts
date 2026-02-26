@@ -108,7 +108,7 @@ export class DhanClient {
     }
 
     public async getRollingOptionData(params: {
-        securityId: string;
+        securityId: string | number;
         exchangeSegment: string;
         instrument: string;
         expiryFlag: 'WEEK' | 'MONTH';
