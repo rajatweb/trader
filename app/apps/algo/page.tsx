@@ -43,7 +43,8 @@ export default function AlgoDashboard() {
         setZones,
         signals,
         config,
-        resetStats
+        resetStats,
+        closePosition
     } = useAlgoStore();
 
     const { brokerCredentials, addToWatchlist, watchlist: tradingWatchlist, isConnected } = useTradingStore();
@@ -57,6 +58,13 @@ export default function AlgoDashboard() {
     // Start the algo runner engine with LIVE chart data
     useAlgoRunner(chartData);
     useMarketFeed();
+
+    const handleManualKill = () => {
+        activePositions.forEach(pos => {
+            closePosition(pos.symbol, pos.currentPrice);
+            playAlgoSound('EXIT');
+        });
+    };
 
     useEffect(() => {
         if (activePositions.length > 0) {
@@ -690,13 +698,27 @@ export default function AlgoDashboard() {
                                             </div>
                                             <div className="p-1 px-2 rounded-full bg-emerald-400 text-emerald-950 text-[10px] font-black animate-pulse">LIVE</div>
                                         </div>
-                                        <div className="flex justify-between items-end">
+                                        <div className="flex justify-between items-end border-b border-white/5 pb-3 mb-3">
                                             <div className="space-y-0.5">
                                                 <div className="text-[9px] opacity-50 uppercase font-bold tracking-widest">Entry @ {pos.entryPrice.toFixed(1)}</div>
                                                 <div className="text-lg font-mono font-black italic tracking-tighter text-blue-300">LTP ₹{pos.currentPrice.toFixed(1)}</div>
                                             </div>
-                                            <div className={`text-xl font-mono font-black ${pos.pnl >= 0 ? 'text-emerald-300' : 'text-white'}`}>
+                                            <div className={`text-xl font-mono font-black ${pos.pnl >= 0 ? 'text-emerald-300' : 'text-rose-400'}`}>
                                                 {pos.pnl >= 0 ? '+' : ''}{pos.pnl.toFixed(1)}
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between items-center bg-black/10 p-2 rounded-lg border border-white/5">
+                                            <div className="text-center w-1/2 border-r border-white/10 pr-2">
+                                                <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Target</div>
+                                                <div className="text-[11px] font-mono font-black text-emerald-400">
+                                                    ₹{pos.target?.toFixed(1) || (pos.entryPrice * 1.4).toFixed(1)}
+                                                </div>
+                                            </div>
+                                            <div className="text-center w-1/2 pl-2">
+                                                <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Stop Loss</div>
+                                                <div className="text-[11px] font-mono font-black text-rose-400">
+                                                    ₹{pos.sl?.toFixed(1) || (pos.entryPrice * 0.8).toFixed(1)}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -710,8 +732,11 @@ export default function AlgoDashboard() {
                             </div>
 
                             {activePositions.length > 0 && (
-                                <button className="w-full mt-6 bg-white text-blue-700 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-50 transition-colors shadow-lg shadow-white/10">
-                                    Manual Kill Switch
+                                <button
+                                    onClick={handleManualKill}
+                                    className="w-full mt-6 bg-rose-500/10 text-rose-500 border border-rose-500/30 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all shadow-lg hover:shadow-rose-500/50"
+                                >
+                                    Emergency Kill Switch
                                 </button>
                             )}
                         </div>

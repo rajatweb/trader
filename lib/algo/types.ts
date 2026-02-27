@@ -6,6 +6,8 @@ export interface AlgoSignal {
     reason: string;
     strength: number; // 0 to 1
     timestamp: number;
+    target?: number; // Optional dynamically calculated target price
+    sl?: number;     // Optional dynamically calculated stop loss
 }
 
 export interface TradingZone {

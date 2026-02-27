@@ -97,18 +97,20 @@ export function useMarketFeed() {
         const algoState = useAlgoStore.getState();
         if (algoState.activePositions.length > 0) {
             priceUpdates.forEach(update => {
-                // Find matching active position by ID or cross-reference the Symbol from the Watchlist
-                const watchItem = watchlist.find(w => w.securityId === update.securityId);
-                const updateSymbol = watchItem ? watchItem.symbol : '';
+                // Find matching active position by exact ID
+                let activePos = algoState.activePositions.find(p => String((p as any).id) === update.securityId);
 
-                const activePos = algoState.activePositions.find(p =>
-                    String((p as any).id) === update.securityId ||
-                    (updateSymbol && p.symbol.includes(updateSymbol)) ||
-                    (updateSymbol && updateSymbol.includes(p.symbol))
-                );
+                // If not found by exact ID, fallback precisely on exact symbol string matching
+                if (!activePos) {
+                    const watchItem = watchlist.find(w => w.securityId === update.securityId);
+                    if (watchItem) {
+                        activePos = algoState.activePositions.find(p => p.symbol === watchItem.symbol);
+                    }
+                }
 
                 if (activePos && update.ltp !== undefined && update.ltp > 0) {
-                    algoState.updatePrices(activePos.symbol, update.ltp);
+                    // Update exact match to avoid collisions
+                    algoState.updatePrices(String((activePos as any).id) || activePos.symbol, update.ltp);
                 }
             });
         }

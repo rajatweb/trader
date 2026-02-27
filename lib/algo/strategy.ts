@@ -131,7 +131,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `MEGA REVERSAL: Weekly Low Liquidity Sweep. High Strength.`,
                 strength: 0.98,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.80, // 80% Options Premium Target (High Conviction)
+                sl: 0.70      // 30% SL (Room to breathe on reversal)
             };
         }
 
@@ -145,7 +147,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `Trap @ PDL. Trend: ${meta.sentiment}`,
                 strength,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.60, // 60% PNL Target
+                sl: 0.80      // 20% SL 
             };
         }
 
@@ -159,7 +163,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `Trap @ PDH. Trend: ${meta.sentiment}`,
                 strength,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.60, // 60% PNL Target
+                sl: 0.80      // 20% SL 
             };
         }
 
@@ -171,7 +177,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `MEGA SHORT: Weekly High Liquidity Sweep.`,
                 strength: 0.98,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.80, // 80% PNL Target
+                sl: 0.70      // 30% SL
             };
         }
 
@@ -188,7 +196,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `SENTIMENT BULLISH: 3pt upward momentum`,
                 strength: 0.90,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.30, // 30% Target (Quick Scalp)
+                sl: 0.85      // 15% Tight SL
             };
         }
 
@@ -200,7 +210,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `SENTIMENT BEARISH: 3pt downward momentum`,
                 strength: 0.90,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.30, // 30% Target (Quick Scalp)
+                sl: 0.85      // 15% Tight SL
             };
         }
 
@@ -212,7 +224,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `MOMENTUM SCALP: Strong Breakout.`,
                 strength: 0.85,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.20, // 20% Micro Scalp
+                sl: 0.85      // 15% Sl
             };
         }
 
@@ -223,7 +237,9 @@ export class TradingStrategy {
                 symbol: 'INDEX',
                 reason: `MOMENTUM SCALP: Strong Breakdown.`,
                 strength: 0.85,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                target: 1.20, // 20% Micro Scalp
+                sl: 0.85      // 15% Sl
             };
         }
 

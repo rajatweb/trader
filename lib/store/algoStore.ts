@@ -13,6 +13,8 @@ interface AlgoPosition {
     currentPrice: number;
     pnl: number;
     timestamp: number;
+    target?: number;
+    sl?: number;
 }
 
 interface AlgoStore {
@@ -134,10 +136,10 @@ export const useAlgoStore = create<AlgoStore>()(
                 monitoredContracts: {}
             }),
 
-            updatePrices: (symbol, price) => set((state) => ({
+            updatePrices: (identifier, price) => set((state) => ({
                 activePositions: state.activePositions.map(p => {
-                    // Match by instrument symbol robustly over substring matches to prevent partial collisions
-                    if (p.symbol.includes(symbol) || symbol.includes(p.symbol)) {
+                    // Match by EXACT ID or EXACT Symbol to prevent Spot overlapping Options
+                    if (String(p.id) === String(identifier) || p.symbol === identifier) {
                         const newPnl = p.type === 'LONG' ? (price - p.entryPrice) * p.quantity : (p.entryPrice - price) * p.quantity;
                         return { ...p, currentPrice: price, pnl: newPnl };
                     }

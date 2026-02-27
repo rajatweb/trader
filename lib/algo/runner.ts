@@ -69,11 +69,10 @@ export function useAlgoRunner(chartData: any[] = []) {
             activePositions.forEach(pos => {
                 const optionItem = watchlist.find(w =>
                     String(w.securityId) === String((pos as any).id) ||
-                    w.symbol.includes(pos.symbol) ||
-                    pos.symbol.includes(w.symbol)
+                    w.symbol === pos.symbol
                 );
                 if (optionItem && optionItem.ltp > 0) {
-                    algoState.updatePrices(pos.symbol, optionItem.ltp);
+                    algoState.updatePrices(String((pos as any).id) || pos.symbol, optionItem.ltp);
                 }
             });
 
@@ -124,15 +123,17 @@ export function useAlgoRunner(chartData: any[] = []) {
                             quantity: qty,
                             currentPrice: entryPrice,
                             pnl: 0,
-                            timestamp: Date.now()
+                            timestamp: Date.now(),
+                            target: signal.target ? entryPrice * signal.target : entryPrice * 1.40,
+                            sl: signal.sl ? entryPrice * signal.sl : entryPrice * 0.80
                         } as any);
                     }
                 } else {
                     // 4. Check for Exit Signal / SL / Target
                     const pos = activePositions.find(p => p.symbol.startsWith(symbol));
                     if (pos) {
-                        const target = pos.entryPrice * 1.40; // 40% Target as requested
-                        const sl = pos.entryPrice * 0.80;     // 20% SL as requested
+                        const target = pos.target || (pos.entryPrice * 1.40); // Smart Target or fallback
+                        const sl = pos.sl || (pos.entryPrice * 0.80);        // Smart SL or fallback
 
                         if (pos.currentPrice >= target || pos.currentPrice <= sl) {
                             algoState.closePosition(pos.symbol, pos.currentPrice);
