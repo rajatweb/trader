@@ -21,10 +21,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     ];
 
     const isBacktestPage = pathname?.startsWith('/apps/backtest');
+    const isAlgoPage = pathname?.startsWith('/apps/algo');
 
-    if (isBacktestPage) {
+    if (isBacktestPage || isAlgoPage) {
         return (
-            <div className="h-screen w-screen overflow-hidden bg-white">
+            <div className="h-screen w-screen overflow-y-auto bg-white">
                 {children}
             </div>
         );

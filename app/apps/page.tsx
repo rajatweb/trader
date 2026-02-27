@@ -4,13 +4,11 @@ import Link from 'next/link';
 import { Activity, LayoutGrid, Terminal, Cpu, Zap, CloudLightning } from 'lucide-react';
 
 const apps = [
-    { id: '1', name: 'Option Chain', description: 'Advanced option chain with OI analysis and Greeks.', icon: LayoutGrid, href: '/apps/option-chain', color: 'text-[#387ed1]', bg: 'bg-blue-50' },
+    { id: 'algo', name: 'Zenith Auto-Trade', description: 'Institutional grade automated execution with historical sentiment analysis.', icon: Zap, href: '/apps/algo', color: 'text-indigo-600', bg: 'bg-indigo-50' },
     { id: 'backtest', name: 'Backtesting', description: 'Test your strategies on historical data with detailed analytics.', icon: Activity, href: '/apps/backtest', color: 'text-[#e91e63]', bg: 'bg-pink-50' },
     { id: '2', name: 'Strategy Builder', description: 'Build and analyze multi-leg option strategies.', icon: Activity, href: '/apps/strategy', color: 'text-[#ff5722]', bg: 'bg-orange-50' },
     { id: '3', name: 'Pacing API', description: 'High frequency data access for algo traders.', icon: Cpu, href: '/apps/api', color: 'text-[#26a69a]', bg: 'bg-green-50' },
-    { id: '4', name: 'Streak', description: 'Algo trading without coding.', icon: Zap, href: '/apps/streak', color: 'text-yellow-600', bg: 'bg-yellow-50' },
-    { id: '5', name: 'Sensibull', description: 'Simplest options trading platform.', icon: CloudLightning, href: '/apps/sensibull', color: 'text-purple-600', bg: 'bg-purple-50' },
-    { id: '6', name: 'Smallcase', description: 'Thematic investment platform.', icon: Terminal, href: '/apps/smallcase', color: 'text-indigo-600', bg: 'bg-indigo-50' },
+    { id: '1', name: 'Option Chain', description: 'Advanced option chain with OI analysis and Greeks.', icon: LayoutGrid, href: '/apps/option-chain', color: 'text-[#387ed1]', bg: 'bg-blue-50' },
 ];
 
 export default function AppsPage() {
