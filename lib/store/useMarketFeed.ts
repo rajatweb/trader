@@ -85,7 +85,8 @@ export function useMarketFeed() {
             open: update.open,
             high: update.high,
             low: update.low,
-            volume: update.volume
+            volume: update.volume,
+            ltt: update.ltt
         }));
 
         // Update watchlist and positions

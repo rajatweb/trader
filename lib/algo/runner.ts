@@ -5,7 +5,7 @@ import { useTradingStore } from '../store/tradingStore';
 import { TradingStrategy } from './strategy';
 import { playAlgoSound } from '../utils/sound';
 
-export function useAlgoRunner() {
+export function useAlgoRunner(chartData: any[] = []) {
     const {
         isRunning,
         config,
@@ -21,6 +21,12 @@ export function useAlgoRunner() {
 
     const { brokerCredentials, watchlist } = useTradingStore();
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
+    const chartDataRef = useRef(chartData);
+
+    // Keep the ref updated with the latest live candles
+    useEffect(() => {
+        chartDataRef.current = chartData;
+    }, [chartData]);
 
     useEffect(() => {
         if (!isRunning || !brokerCredentials) {
@@ -70,11 +76,15 @@ export function useAlgoRunner() {
                 // 3. Check for Entry Signals (only if no open position for this index area)
                 const hasPosition = activePositions.some(p => p.symbol.startsWith(symbol));
                 if (!hasPosition) {
-                    const mockPrevCandles = zones.filter(z => z.description.includes(symbol)).map(z => ({ close: z.price, volume: 1000000 }));
+                    const latestCandles = chartDataRef.current;
+                    // Provide the last 30 minutes of real intraday data for trap pattern detection
+                    const realPrevCandles = latestCandles.slice(Math.max(0, latestCandles.length - 30), Math.max(0, latestCandles.length - 1));
+
+                    if (realPrevCandles.length < 5) return; // Need at least some history to scan for traps
 
                     const signal = TradingStrategy.checkSignal(
-                        { close: indexItem.ltp, volume: indexItem.volume || 100000 },
-                        mockPrevCandles,
+                        { close: indexItem.ltp, high: indexItem.ltp, low: indexItem.ltp, volume: indexItem.volume || 100000, ...latestCandles[latestCandles.length - 1] },
+                        realPrevCandles,
                         zones
                     );
 

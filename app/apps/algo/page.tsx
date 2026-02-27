@@ -30,10 +30,9 @@ import { TradingStrategy } from '@/lib/algo/strategy';
 import { useAlgoRunner } from '@/lib/algo/runner';
 import AlgoRealtimeChart from './components/AlgoRealtimeChart';
 import { playAlgoSound } from '@/lib/utils/sound';
+import { useMarketFeed } from '@/lib/store/useMarketFeed';
 
 export default function AlgoDashboard() {
-    // Start the algo runner engine
-    useAlgoRunner();
     const {
         isRunning,
         setRunning,
@@ -54,12 +53,90 @@ export default function AlgoDashboard() {
     const [chartData, setChartData] = useState<any[]>([]);
     const [selectedIndex, setSelectedIndex] = useState('BANKNIFTY');
     const [isMounted, setIsMounted] = useState(false);
+
+    // Start the algo runner engine with LIVE chart data
+    useAlgoRunner(chartData);
+    useMarketFeed();
+
     const lastFetchTime = useRef<number>(0);
     const hasInitialized = useRef<boolean>(false);
 
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // Update time every second
+    // Memoized index item to avoid redundant chart updates from other watchlist changes
+    const indexItem = useMemo(() => {
+        const symbol = selectedIndex;
+        return tradingWatchlist.find(w =>
+            w.symbol.includes(symbol) &&
+            !w.symbol.includes('CE') &&
+            !w.symbol.includes('PE')
+        );
+    }, [tradingWatchlist, selectedIndex]);
+
+    // Ensure the index itself is in the watchlist so the WebSocket tracks it
+    useEffect(() => {
+        if (brokerCredentials && isConnected) {
+            const securityId = selectedIndex === 'NIFTY' ? '13' : '25';
+            if (!tradingWatchlist.find(w => w.securityId === securityId)) {
+                addToWatchlist({
+                    securityId,
+                    symbol: selectedIndex,
+                    exchange: 'NSE',
+                    segment: 'IDX_I',
+                    ltp: 0,
+                    change: 0,
+                    changePercent: 0
+                });
+            }
+        }
+    }, [selectedIndex, brokerCredentials, isConnected, tradingWatchlist.length]);
+
+    // Live Chart Sync: Update the last candle with real-time LTP using Exchange Time (LTT)
+    useEffect(() => {
+        if (chartData.length === 0 || !indexItem || !indexItem.ltp || indexItem.ltp < 1000) return;
+
+        setChartData(prev => {
+            if (prev.length === 0) return prev;
+            const lastIdx = prev.length - 1;
+            const last = prev[lastIdx];
+
+            // Use Exchange Time (LTT) if available, fallback to System Time
+            const nowTs = indexItem.ltt || Math.floor(Date.now() / 1000);
+            const currentMinuteStart = Math.floor(nowTs / 60) * 60;
+
+            // Roll over to new minute if Exchange time says so
+            if (currentMinuteStart > last.time) {
+                const newCandle = {
+                    time: currentMinuteStart,
+                    open: indexItem.ltp!,
+                    high: indexItem.ltp!,
+                    low: indexItem.ltp!,
+                    close: indexItem.ltp!,
+                    volume: 0
+                };
+                return [...prev, newCandle];
+            }
+
+            // Update current forming candle
+            const needsUpdate = last.close !== indexItem.ltp ||
+                indexItem.ltp! > last.high ||
+                (last.low > 0 && indexItem.ltp! < last.low);
+
+            if (!needsUpdate) return prev;
+            if (last.close > 0 && indexItem.ltp < last.close * 0.5) return prev;
+
+            const updatedCandle = {
+                ...last,
+                close: indexItem.ltp!,
+                high: Math.max(last.high, indexItem.ltp!),
+                low: Math.min(last.low || indexItem.ltp!, indexItem.ltp!)
+            };
+
+            const newData = [...prev];
+            newData[lastIdx] = updatedCandle;
+            return newData;
+        });
+    }, [indexItem?.ltp, indexItem?.ltt, chartData]);
     useEffect(() => {
         setIsMounted(true);
         const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -225,7 +302,8 @@ export default function AlgoDashboard() {
                     const low = Number(candle.low);
                     const close = Number(candle.close);
 
-                    if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) return null;
+                    // Skip invalid or 0-price data which breaks chart scaling
+                    if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close) || open <= 0) return null;
 
                     return {
                         time: numTs > 10000000000 ? numTs / 1000 : numTs, // Standardize to seconds (threshold 10B)
@@ -235,7 +313,23 @@ export default function AlgoDashboard() {
                 }).filter(Boolean);
 
                 console.log(`[Intraday] Formatted ${formatted.length} candles`);
-                setChartData(formatted);
+
+                // Merge Logic: Use fresh data but preserve the "active" forming candle if it's more recent
+                setChartData(prev => {
+                    if (prev.length === 0) return formatted;
+                    const lastInPrev = prev[prev.length - 1];
+                    const lastInFormatted = formatted[formatted.length - 1];
+
+                    // If our local state has a newer candle than what the API just returned,
+                    // keep our local candle as the tip so the LTP doesn't jump back to stale API data
+                    if (lastInPrev.time > lastInFormatted.time) {
+                        return [...formatted, lastInPrev];
+                    }
+
+                    // If they are on the same minute, we let the fresh data through, 
+                    // and the WebSocket effect will immediately re-apply the live LTP in the next tick.
+                    return formatted;
+                });
             }
         } catch (err) {
             console.error("Intraday fetch failed", err);
