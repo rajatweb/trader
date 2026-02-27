@@ -56,12 +56,14 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
         const mainG = svg.append('g')
             .attr('transform', `translate(${margin.left},${margin.top})`);
 
+        console.log(`[AlgoChart] Rendering ${data.length} candles, scale width: ${widthChart}`);
+
         // Scales
         const x = d3.scaleLinear()
-            .domain([Math.max(0, data.length - 800), data.length]) // Show last 800 candles (covering ~2 days)
+            .domain([-1, data.length + 1]) // Add padding so first/last candles are visible
             .range([0, widthChart]);
 
-        const latestData = data.slice(-800);
+        const latestData = data.slice(-Math.min(data.length, 2000));
         const priceMin = d3.min(latestData, d => d.low) || 0;
         const priceMax = d3.max(latestData, d => d.high) || 0;
         const pricePadding = (priceMax - priceMin) * 0.15;
@@ -190,27 +192,29 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
 
             currentZones.forEach(zone => {
                 const yPos = sy(zone.price);
-                const color = zone.description.includes('PDH') ? '#f43f5e' :
-                    zone.description.includes('PDL') ? '#10b981' : '#3b82f6';
+                const isWeekly = zone.description.includes('Weekly');
 
-                const line = levelG.append('line')
+                const color = zone.description.includes('PDH') || zone.description.includes('Weekly High') ? '#f43f5e' :
+                    zone.description.includes('PDL') || zone.description.includes('Weekly Low') ? '#10b981' : '#3b82f6';
+
+                levelG.append('line')
                     .attr('x1', 0)
                     .attr('x2', widthChart)
                     .attr('y1', yPos)
                     .attr('y2', yPos)
                     .attr('stroke', color)
-                    .attr('stroke-width', 1.5)
-                    .attr('stroke-dasharray', '5,5')
-                    .attr('opacity', 0.6);
+                    .attr('stroke-width', isWeekly ? 2.5 : 1)
+                    .attr('stroke-dasharray', isWeekly ? 'none' : '5,5')
+                    .attr('opacity', isWeekly ? 0.8 : 0.4);
 
                 levelG.append('text')
-                    .attr('x', widthChart - 5)
-                    .attr('y', yPos - 5)
+                    .attr('x', widthChart + 55)
+                    .attr('y', yPos + 3)
                     .attr('text-anchor', 'end')
                     .attr('fill', color)
-                    .attr('font-size', '10px')
+                    .attr('font-size', isWeekly ? '11px' : '9px')
                     .attr('font-weight', 'bold')
-                    .text(`${zone.description}: ${zone.price.toFixed(1)}`);
+                    .text(`${zone.description}`);
             });
         };
 
@@ -220,15 +224,28 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
 
         const drawAxes = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
             const timeFormat = d3.timeFormat('%H:%M');
+            const dateTimeFormat = d3.timeFormat('%d/%m %H:%M');
 
             const [start, end] = sx.domain();
             const tickIndices = [];
-            const step = Math.max(1, Math.ceil((end - start) / 8));
-            for (let i = Math.floor(start); i <= end; i += step) if (data[i]) tickIndices.push(i);
+
+            // Adjust tick density based on zoom level
+            const range = end - start;
+            const step = Math.max(1, Math.ceil(range / 6));
+
+            for (let i = Math.max(0, Math.floor(start)); i <= Math.min(data.length - 1, end); i += step) {
+                if (data[i]) tickIndices.push(i);
+            }
 
             xAxisG.call(d3.axisBottom(sx)
                 .tickValues(tickIndices)
-                .tickFormat(i => data[i as number] ? timeFormat(new Date(data[i as number].time * 1000)) : '') as any)
+                .tickFormat(i => {
+                    const d = data[i as number];
+                    if (!d) return '';
+                    const date = new Date(d.time * 1000);
+                    // Use date + time if it's the start of a day or range is large
+                    return range > 500 ? dateTimeFormat(date) : timeFormat(date);
+                }) as any)
                 .select('.domain').remove();
 
             xAxisG.selectAll('text').attr('fill', '#64748b').style('font-size', '10px').style('font-weight', '600');

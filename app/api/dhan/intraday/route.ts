@@ -11,15 +11,9 @@ export async function POST(request: NextRequest) {
         }
 
         const client = new DhanClient({ clientId, accessToken });
-
-        // Dhan Index Historical API often requires 'D' for daily candles rather than '1D'
-        const finalParams = { ...params };
-        if (finalParams.interval === '1D') finalParams.interval = 'D';
-
-        const dhanResponse = await client.getHistoricalData(finalParams as any);
+        const dhanResponse = await client.getIntradayData(params as any);
 
         // Dhan returns data in columns: { open: [], high: [], ... }
-        // We look for 'open' or 'Open' to detect the column-based structure
         const dataRoot = dhanResponse.data || dhanResponse;
 
         // Case 1: Already an array
@@ -42,12 +36,9 @@ export async function POST(request: NextRequest) {
                         const val = dataRoot[key][i];
                         const lowerKey = key.toLowerCase();
 
-                        // Standardize core price keys
                         if (['open', 'high', 'low', 'close', 'volume'].includes(lowerKey)) {
                             candle[lowerKey] = val;
-                        }
-                        // Standardize time keys (Strategy expects 'time' or 'start_Time')
-                        else if (lowerKey === 'start_time' || lowerKey === 'time' || lowerKey === 'timestamp') {
+                        } else if (lowerKey === 'start_time' || lowerKey === 'time' || lowerKey === 'timestamp') {
                             candle.time = val;
                             candle.start_Time = val;
                             candle.start_time = val;
@@ -62,17 +53,9 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: true, data: formatted });
         }
 
-        return NextResponse.json({
-            success: true,
-            data: [],
-            debug: { hasData: !!dhanResponse.data, keys: Object.keys(dataRoot), status: dhanResponse.status }
-        });
-
+        return NextResponse.json({ success: true, data: [], raw: dhanResponse });
     } catch (error: any) {
-        console.error('Dhan Historical Data API Error:', error);
-        return NextResponse.json({
-            error: error.message || 'Failed to fetch historical data',
-            success: false
-        }, { status: 500 });
+        console.error("Dhan Intraday API Error:", error.message);
+        return NextResponse.json({ error: error.message || 'Internal Server Error', success: false }, { status: 500 });
     }
 }

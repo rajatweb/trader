@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Play,
     Square,
@@ -19,7 +19,8 @@ import {
     ChevronRight,
     PieChart,
     Wallet,
-    BarChart3
+    BarChart3,
+    Volume2
 } from 'lucide-react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -28,6 +29,7 @@ import { useTradingStore } from '@/lib/store/tradingStore';
 import { TradingStrategy } from '@/lib/algo/strategy';
 import { useAlgoRunner } from '@/lib/algo/runner';
 import AlgoRealtimeChart from './components/AlgoRealtimeChart';
+import { playAlgoSound } from '@/lib/utils/sound';
 
 export default function AlgoDashboard() {
     // Start the algo runner engine
@@ -45,12 +47,17 @@ export default function AlgoDashboard() {
         resetStats
     } = useAlgoStore();
 
-    const { brokerCredentials, addToWatchlist, watchlist: tradingWatchlist } = useTradingStore();
+    const { brokerCredentials, addToWatchlist, watchlist: tradingWatchlist, isConnected } = useTradingStore();
     const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [chartData, setChartData] = useState<any[]>([]);
-    const [selectedIndex, setSelectedIndex] = useState('NIFTY');
+    const [selectedIndex, setSelectedIndex] = useState('BANKNIFTY');
     const [isMounted, setIsMounted] = useState(false);
+    const lastFetchTime = useRef<number>(0);
+    const hasInitialized = useRef<boolean>(false);
+
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     // Update time every second
     useEffect(() => {
@@ -62,108 +69,116 @@ export default function AlgoDashboard() {
     const fetchHistoryAndPlan = async () => {
         if (!brokerCredentials) return;
         setIsLoading(true);
+        setError(null);
         try {
             const toDate = new Date().toISOString().split('T')[0];
             const fromDate = new Date();
-            fromDate.setDate(fromDate.getDate() - 15);
+            fromDate.setDate(fromDate.getDate() - 5);
             const fromDateStr = fromDate.toISOString().split('T')[0];
+            console.log(`[Algo] Analyzing Architecture from ${fromDateStr} to ${toDate}`);
 
             let allZones: any[] = [];
 
-            // Loop through configured symbols (NIFTY, BANKNIFTY)
-            for (const symbol of config.symbols) {
-                const securityId = symbol === 'NIFTY' ? '13' : '25';
+            // Scan only the currently selected symbol
+            const symbol = selectedIndex;
+            const securityId = symbol === 'NIFTY' ? '13' : '25';
 
-                // 1. Fetch Historical Data for Zones
-                const res = await fetch('/api/dhan/historical', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        clientId: brokerCredentials?.clientId,
-                        accessToken: brokerCredentials?.accessToken,
-                        securityId,
-                        exchangeSegment: 'IDX_I',
-                        instrument: 'INDEX',
-                        fromDate: fromDateStr,
-                        toDate
-                    })
-                });
+            // 1. Fetch Historical Data for Zones
+            const res = await fetch('/api/dhan/historical', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    clientId: brokerCredentials?.clientId,
+                    accessToken: brokerCredentials?.accessToken,
+                    securityId,
+                    exchangeSegment: 'IDX_I',
+                    instrument: 'INDEX',
+                    fromDate: fromDateStr,
+                    toDate,
+                    interval: '1D'
+                })
+            });
 
-                const json = await res.json();
-                let lastSpot = 0;
-                if (json.success && json.data) {
-                    const formatted = Array.isArray(json.data) ? json.data : (json.data.data || []);
-                    const analyzedZones = TradingStrategy.identifyZones(formatted);
-                    // Tag zones with symbol
-                    const taggedZones = analyzedZones.map(z => ({
-                        ...z,
-                        description: `${symbol}: ${z.description}`
-                    }));
-                    allZones = [...allZones, ...taggedZones];
-                    if (formatted.length > 0) {
-                        lastSpot = formatted[formatted.length - 1].close;
-                    }
+            const json = await res.json();
+            let lastSpot = 0;
+            if (json.success && json.data) {
+                const formatted = Array.isArray(json.data) ? json.data : (json.data.data || []);
+                const analyzedZones = TradingStrategy.identifyZones(formatted);
+                // Tag zones with symbol
+                const taggedZones = analyzedZones.map(z => ({
+                    ...z,
+                    description: `${symbol}: ${z.description}`
+                }));
+                allZones = [...allZones, ...taggedZones];
+                if (formatted.length > 0) {
+                    lastSpot = formatted[formatted.length - 1].close;
                 }
+            }
 
-                // 2. Fetch Option Chain for ATM Selection
-                const expiryRes = await fetch('/api/dhan/option-chain', {
+            // 2. Fetch Option Chain for ATM Selection
+            const expiryRes = await fetch('/api/dhan/option-chain', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    clientId: brokerCredentials?.clientId,
+                    accessToken: brokerCredentials?.accessToken,
+                    underlyingScrip: securityId,
+                    underlyingSeg: 'IDX_I'
+                })
+            });
+
+            const expiryJson = await expiryRes.json();
+            if (expiryJson.success && expiryJson.data && expiryJson.data.length > 0) {
+                const nearestExpiry = expiryJson.data[0];
+
+                // MANDATORY: Wait 3.5s before requesting the full chain (1 req / 3s limit)
+                await sleep(3500);
+
+                const chainRes = await fetch('/api/dhan/option-chain', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         clientId: brokerCredentials?.clientId,
                         accessToken: brokerCredentials?.accessToken,
                         underlyingScrip: securityId,
-                        underlyingSeg: 'IDX_I'
+                        underlyingSeg: 'IDX_I',
+                        expiry: nearestExpiry
                     })
                 });
 
-                const expiryJson = await expiryRes.json();
-                if (expiryJson.success && expiryJson.data && expiryJson.data.length > 0) {
-                    const nearestExpiry = expiryJson.data[0];
+                const chainJson = await chainRes.json();
+                if (chainJson.success && chainJson.data) {
+                    const atmStrike = TradingStrategy.getATMStrike(lastSpot || 22000, symbol);
+                    const ceContract = TradingStrategy.findContract(chainJson.data, atmStrike, 'CALL');
+                    const peContract = TradingStrategy.findContract(chainJson.data, atmStrike, 'PUT');
 
-                    const chainRes = await fetch('/api/dhan/option-chain', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            clientId: brokerCredentials?.clientId,
-                            accessToken: brokerCredentials?.accessToken,
-                            underlyingScrip: securityId,
-                            underlyingSeg: 'IDX_I',
-                            expiry: nearestExpiry
-                        })
-                    });
+                    if (ceContract || peContract) {
+                        useAlgoStore.getState().setMonitoredContracts(symbol, { ce: ceContract, pe: peContract });
 
-                    const chainJson = await chainRes.json();
-                    if (chainJson.success && chainJson.data) {
-                        const atmStrike = TradingStrategy.getATMStrike(lastSpot || 22000, symbol);
-                        const ceContract = TradingStrategy.findContract(chainJson.data, atmStrike, 'CALL');
-                        const peContract = TradingStrategy.findContract(chainJson.data, atmStrike, 'PUT');
-
-                        if (ceContract || peContract) {
-                            useAlgoStore.getState().setMonitoredContracts(symbol, { ce: ceContract, pe: peContract });
-
-                            // Proactively add to trading watchlist for live feed
-                            [ceContract, peContract].forEach(c => {
-                                if (c && !tradingWatchlist.find(w => w.securityId === String(c.securityId))) {
-                                    addToWatchlist({
-                                        securityId: String(c.securityId),
-                                        symbol: `${symbol} ${c.strike_price} ${c.oc_type === 'CALL' ? 'CE' : 'PE'}`,
-                                        exchange: 'NSE',
-                                        segment: 'NSE_FNO',
-                                        ltp: 0,
-                                        change: 0,
-                                        changePercent: 0
-                                    });
-                                }
-                            });
-                        }
+                        // Proactively add to trading watchlist for live feed
+                        [ceContract, peContract].forEach(c => {
+                            if (c && !tradingWatchlist.find(w => w.securityId === String(c.securityId))) {
+                                addToWatchlist({
+                                    securityId: String(c.securityId),
+                                    symbol: `${symbol} ${c.strike_price} ${c.oc_type === 'CALL' ? 'CE' : 'PE'}`,
+                                    exchange: 'NSE',
+                                    segment: 'NSE_FNO',
+                                    ltp: 0,
+                                    change: 0,
+                                    changePercent: 0
+                                });
+                            }
+                        });
                     }
                 }
             }
 
+
             setZones(allZones);
-        } catch (err) {
+        } catch (err: any) {
             console.error("Plan fetch failed", err);
+            setError(err.message || "Failed to analyze market architecture. Please check your Dhan connection.");
+            hasInitialized.current = false; // Allow retry
         } finally {
             setIsLoading(false);
         }
@@ -175,9 +190,9 @@ export default function AlgoDashboard() {
             const securityId = selectedIndex === 'NIFTY' ? '13' : '25';
             const toDate = new Date().toISOString().split('T')[0];
             const fromDate = new Date();
-            fromDate.setDate(fromDate.getDate() - 2); // Get 2 days of 1min data
+            fromDate.setDate(fromDate.getDate() - 5); // Get 5 days of 1min data
 
-            const res = await fetch('/api/dhan/historical', {
+            const res = await fetch('/api/dhan/intraday', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -186,21 +201,40 @@ export default function AlgoDashboard() {
                     securityId,
                     exchangeSegment: 'IDX_I',
                     instrument: 'INDEX',
+                    interval: '1',
                     fromDate: fromDate.toISOString().split('T')[0],
                     toDate
                 })
             });
 
             const json = await res.json();
+            console.log("[Intraday] Raw response:", json);
+
             if (json.success && json.data) {
-                const formatted = (json.data.data || []).map((candle: any) => ({
-                    time: candle.start_Time / 1000,
-                    open: candle.open,
-                    high: candle.high,
-                    low: candle.low,
-                    close: candle.close,
-                    volume: candle.volume
-                }));
+                const rawData = Array.isArray(json.data) ? json.data : (json.data.data || []);
+                console.log(`[Intraday] Received ${rawData.length} candles`);
+
+                const formatted = rawData.map((candle: any) => {
+                    const ts = candle.start_Time || candle.time || candle.timestamp || candle.start_time;
+                    const numTs = Number(ts);
+
+                    if (!ts || isNaN(numTs) || numTs === 0) return null;
+
+                    const open = Number(candle.open);
+                    const high = Number(candle.high);
+                    const low = Number(candle.low);
+                    const close = Number(candle.close);
+
+                    if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) return null;
+
+                    return {
+                        time: numTs > 10000000000 ? numTs / 1000 : numTs, // Standardize to seconds (threshold 10B)
+                        open, high, low, close,
+                        volume: Number(candle.volume) || 0
+                    };
+                }).filter(Boolean);
+
+                console.log(`[Intraday] Formatted ${formatted.length} candles`);
                 setChartData(formatted);
             }
         } catch (err) {
@@ -217,10 +251,11 @@ export default function AlgoDashboard() {
     }, [brokerCredentials, selectedIndex]);
 
     useEffect(() => {
-        if (zones.length === 0 && brokerCredentials) {
+        if (brokerCredentials && !hasInitialized.current && zones.length === 0) {
+            hasInitialized.current = true;
             fetchHistoryAndPlan();
         }
-    }, [brokerCredentials]);
+    }, [brokerCredentials, zones.length]);
 
     const formatCurrency = (val: number) => {
         return new Intl.NumberFormat('en-IN', {
@@ -334,7 +369,14 @@ export default function AlgoDashboard() {
                                     className={`text-slate-500 cursor-pointer hover:text-white transition-colors ${isLoading ? 'animate-spin' : ''}`}
                                     onClick={fetchIntradayData}
                                 />
-                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Auto-Syncing</span>
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mr-2">Auto-Syncing</span>
+                                <button
+                                    onClick={() => playAlgoSound('NOTIFICATION')}
+                                    className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-all border border-white/5"
+                                    title="Test Notification Sound"
+                                >
+                                    <Volume2 size={12} />
+                                </button>
                             </div>
                         </div>
                         <AlgoRealtimeChart
@@ -352,7 +394,7 @@ export default function AlgoDashboard() {
                                 <span className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
                                     <Layers size={18} />
                                 </span>
-                                <h2 className="font-bold text-white tracking-tight">Market Architecture <span className="text-slate-500 font-medium text-sm ml-2">(10-Day Analysis)</span></h2>
+                                <h2 className="font-bold text-white tracking-tight">Market Architecture <span className="text-slate-500 font-medium text-sm ml-2">(Market Analysis)</span></h2>
                             </div>
                             <button
                                 onClick={fetchHistoryAndPlan}
@@ -369,7 +411,7 @@ export default function AlgoDashboard() {
                                 </h3>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                                     <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-                                        <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">10-Day Sentiment</span>
+                                        <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Market Sentiment</span>
                                         <span className={`text-xs font-black ${(zones[0] as any)?.metadata?.sentiment === 'BULLISH' ? 'text-emerald-400' : 'text-rose-400'}`}>
                                             {(zones[0] as any)?.metadata?.sentiment || 'ANALYZING...'}
                                         </span>
@@ -419,10 +461,40 @@ export default function AlgoDashboard() {
                                         </div>
                                     ))}
                                 </div>
-                            ) : (
+                            ) : error ? (
+                                <div className="py-12 text-center text-rose-400">
+                                    <AlertCircle className="mx-auto mb-3" size={32} />
+                                    <p className="text-sm font-medium">{error}</p>
+                                    <button
+                                        onClick={fetchHistoryAndPlan}
+                                        className="mt-4 px-6 py-2 bg-blue-500 rounded-full text-white text-xs font-bold hover:bg-blue-600 transition-all uppercase tracking-widest"
+                                    >
+                                        Retry Analysis
+                                    </button>
+                                </div>
+                            ) : !brokerCredentials ? (
                                 <div className="py-12 text-center">
-                                    <AlertCircle className="mx-auto text-slate-700 mb-3" size={32} />
-                                    <p className="text-sm text-slate-500 font-medium">No architectural mapping found. Initialize Dhan API.</p>
+                                    <Shield className="mx-auto text-slate-700 mb-3" size={32} />
+                                    <p className="text-sm text-slate-500 font-medium mb-4 text-balance">Dhan API connection required for architectural analysis.</p>
+                                    <Link href="/profile" className="px-6 py-2 bg-slate-800 rounded-full text-white text-xs font-bold hover:bg-slate-700 transition-all uppercase tracking-widest border border-white/5">
+                                        Initialize API Keys
+                                    </Link>
+                                </div>
+                            ) : zones.length === 0 ? (
+                                <div className="py-12 text-center">
+                                    <Activity className="mx-auto text-slate-700 mb-3 animate-pulse" size={32} />
+                                    <p className="text-sm text-slate-500 font-medium mb-4">No mapping identified for today's session yet.</p>
+                                    <button
+                                        onClick={fetchHistoryAndPlan}
+                                        className="px-6 py-2 bg-blue-500/10 text-blue-400 rounded-full text-xs font-bold hover:bg-blue-500/20 transition-all uppercase tracking-widest border border-blue-500/20"
+                                    >
+                                        Run Scan
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="py-12 text-center text-slate-500">
+                                    <Activity className="mx-auto mb-3 opacity-20" size={32} />
+                                    <p className="text-sm font-medium italic opacity-60">Ready for market session...</p>
                                 </div>
                             )}
                         </div>

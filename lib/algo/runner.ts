@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useAlgoStore } from '../store/algoStore';
 import { useTradingStore } from '../store/tradingStore';
 import { TradingStrategy } from './strategy';
+import { playAlgoSound } from '../utils/sound';
 
 export function useAlgoRunner() {
     const {
@@ -43,6 +44,7 @@ export function useAlgoRunner() {
                 if ((timeStr === config.endTime || TradingStrategy.shouldStopForDay(stats.totalPnl, 10000)) && activePositions.length > 0) {
                     activePositions.forEach(pos => {
                         closePosition(pos.symbol, pos.currentPrice);
+                        playAlgoSound('EXIT');
                     });
                 }
                 return;
@@ -86,6 +88,7 @@ export function useAlgoRunner() {
 
                         if (entryPrice > 0) {
                             addSignal({ ...signal, symbol: `${symbol} OPT` });
+                            playAlgoSound('ENTRY');
 
                             const qty = TradingStrategy.calculateQuantity(config.initialCapital, entryPrice, config.lotSize[symbol] || 1);
 
@@ -110,6 +113,7 @@ export function useAlgoRunner() {
 
                         if (pos.currentPrice >= target || pos.currentPrice <= sl) {
                             closePosition(pos.symbol, pos.currentPrice);
+                            playAlgoSound('EXIT');
                         }
                     }
                 }
