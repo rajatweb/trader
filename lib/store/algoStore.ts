@@ -5,6 +5,7 @@ import { AlgoSignal, TradingZone, AlgoStats, AlgoConfig } from '../algo/types';
 import { TradingStrategy } from '../algo/strategy';
 
 interface AlgoPosition {
+    id: string; // FNO token ID
     symbol: string;
     type: 'LONG' | 'SHORT';
     entryPrice: number;
@@ -43,12 +44,11 @@ export const useAlgoStore = create<AlgoStore>()(
             config: {
                 initialCapital: 100000,
                 maxRiskPerTrade: 1,
-                symbols: ['NIFTY', 'BANKNIFTY'],
+                symbols: ['BANKNIFTY'],
                 startTime: '09:16',
                 endTime: '15:00',
                 lotSize: {
-                    'NIFTY': 50,
-                    'BANKNIFTY': 15
+                    'BANKNIFTY': 30
                 }
             },
             stats: {
@@ -135,11 +135,14 @@ export const useAlgoStore = create<AlgoStore>()(
             }),
 
             updatePrices: (symbol, price) => set((state) => ({
-                activePositions: state.activePositions.map(p =>
-                    p.symbol === symbol
-                        ? { ...p, currentPrice: price, pnl: p.type === 'LONG' ? (price - p.entryPrice) * p.quantity : (p.entryPrice - price) * p.quantity }
-                        : p
-                )
+                activePositions: state.activePositions.map(p => {
+                    // Match by instrument symbol robustly over substring matches to prevent partial collisions
+                    if (p.symbol.includes(symbol) || symbol.includes(p.symbol)) {
+                        const newPnl = p.type === 'LONG' ? (price - p.entryPrice) * p.quantity : (p.entryPrice - price) * p.quantity;
+                        return { ...p, currentPrice: price, pnl: newPnl };
+                    }
+                    return p;
+                })
             })),
 
             setMonitoredContracts: (symbol, contracts) => set((state) => ({

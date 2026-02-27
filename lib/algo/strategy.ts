@@ -175,7 +175,59 @@ export class TradingStrategy {
             };
         }
 
-        return { type: 'NONE', price: 0, symbol: '', reason: 'Waiting for Trap', strength: 0, timestamp: Date.now() };
+        // 5. SENTIMENT-BASED SCALP (Fast Execution)
+        // Aggressively find all possible trades in the direction of sentiment
+        const sentiment = meta.sentiment || 'NEUTRAL';
+        const currentMove = currentCandle.close - currentCandle.open;
+
+        // If BULLISH, take ANY 3-point upward momentum from open
+        if (sentiment === 'BULLISH' && currentMove > 3) {
+            return {
+                type: 'BUY',
+                price: currentCandle.close,
+                symbol: 'INDEX',
+                reason: `SENTIMENT BULLISH: 3pt upward momentum`,
+                strength: 0.90,
+                timestamp: Date.now()
+            };
+        }
+
+        // If BEARISH, take ANY 3-point downward momentum from open
+        if (sentiment === 'BEARISH' && currentMove < -3) {
+            return {
+                type: 'SELL',
+                price: currentCandle.close,
+                symbol: 'INDEX',
+                reason: `SENTIMENT BEARISH: 3pt downward momentum`,
+                strength: 0.90,
+                timestamp: Date.now()
+            };
+        }
+
+        // Multi-directional fast scalp if no clear sentiment but steep momentum (5 pts)
+        if (currentCandle.close > lastCandle.high + 5) {
+            return {
+                type: 'BUY',
+                price: currentCandle.close,
+                symbol: 'INDEX',
+                reason: `MOMENTUM SCALP: Strong Breakout.`,
+                strength: 0.85,
+                timestamp: Date.now()
+            };
+        }
+
+        if (currentCandle.close < lastCandle.low - 5) {
+            return {
+                type: 'SELL',
+                price: currentCandle.close,
+                symbol: 'INDEX',
+                reason: `MOMENTUM SCALP: Strong Breakdown.`,
+                strength: 0.85,
+                timestamp: Date.now()
+            };
+        }
+
+        return { type: 'NONE', price: 0, symbol: '', reason: 'Waiting for Sentiment Pull or Breakout', strength: 0, timestamp: Date.now() };
     }
 
     /**
@@ -213,6 +265,7 @@ export class TradingStrategy {
 
         return {
             ...contract,
+            securityId: contract.security_id, // Safely remap Dhan's snake_case to the app's camelCase standard
             strike_price: targetStrike,
             oc_type: type
         };

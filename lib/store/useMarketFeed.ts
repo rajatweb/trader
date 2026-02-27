@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradingStore } from './tradingStore';
+import { useAlgoStore } from './algoStore';
 import { DhanFeedClient, MarketDataUpdate } from '@/lib/dhan/websocket-client';
 
 /**
@@ -91,6 +92,26 @@ export function useMarketFeed() {
 
         // Update watchlist and positions
         updateWatchlistPrices(priceUpdates);
+
+        // Instantly update Algorithm Active Engagements P&L bypassing the 3s loop
+        const algoState = useAlgoStore.getState();
+        if (algoState.activePositions.length > 0) {
+            priceUpdates.forEach(update => {
+                // Find matching active position by ID or cross-reference the Symbol from the Watchlist
+                const watchItem = watchlist.find(w => w.securityId === update.securityId);
+                const updateSymbol = watchItem ? watchItem.symbol : '';
+
+                const activePos = algoState.activePositions.find(p =>
+                    String((p as any).id) === update.securityId ||
+                    (updateSymbol && p.symbol.includes(updateSymbol)) ||
+                    (updateSymbol && updateSymbol.includes(p.symbol))
+                );
+
+                if (activePos && update.ltp !== undefined && update.ltp > 0) {
+                    algoState.updatePrices(activePos.symbol, update.ltp);
+                }
+            });
+        }
 
         // Check pending orders for execution
         checkPendingOrders(updates);

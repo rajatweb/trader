@@ -58,6 +58,13 @@ export default function AlgoDashboard() {
     useAlgoRunner(chartData);
     useMarketFeed();
 
+    useEffect(() => {
+        if (activePositions.length > 0) {
+            console.log("[DEBUG] Active Positions Grid Render:", activePositions);
+            console.log("[DEBUG] Watchlist from TradingStore:", useTradingStore.getState().watchlist.filter(w => w.segment === 'NSE_FNO'));
+        }
+    }, [activePositions]);
+
     const lastFetchTime = useRef<number>(0);
     const hasInitialized = useRef<boolean>(false);
 
@@ -76,7 +83,7 @@ export default function AlgoDashboard() {
     // Ensure the index itself is in the watchlist so the WebSocket tracks it
     useEffect(() => {
         if (brokerCredentials && isConnected) {
-            const securityId = selectedIndex === 'NIFTY' ? '13' : '25';
+            const securityId = '25'; // BANKNIFTY
             if (!tradingWatchlist.find(w => w.securityId === securityId)) {
                 addToWatchlist({
                     securityId,
@@ -158,7 +165,7 @@ export default function AlgoDashboard() {
 
             // Scan only the currently selected symbol
             const symbol = selectedIndex;
-            const securityId = symbol === 'NIFTY' ? '13' : '25';
+            const securityId = '25'; // BANKNIFTY
 
             // 1. Fetch Historical Data for Zones
             const res = await fetch('/api/dhan/historical', {
@@ -264,7 +271,7 @@ export default function AlgoDashboard() {
     const fetchIntradayData = async () => {
         if (!brokerCredentials) return;
         try {
-            const securityId = selectedIndex === 'NIFTY' ? '13' : '25';
+            const securityId = '25'; // BANKNIFTY
             const toDate = new Date().toISOString().split('T')[0];
             const fromDate = new Date();
             fromDate.setDate(fromDate.getDate() - 5); // Get 5 days of 1min data
@@ -447,7 +454,7 @@ export default function AlgoDashboard() {
                     <section className="h-[450px] w-full mb-12">
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-                                {['NIFTY', 'BANKNIFTY'].map(s => (
+                                {['BANKNIFTY'].map(s => (
                                     <button
                                         key={s}
                                         onClick={() => setSelectedIndex(s)}
@@ -686,7 +693,7 @@ export default function AlgoDashboard() {
                                         <div className="flex justify-between items-end">
                                             <div className="space-y-0.5">
                                                 <div className="text-[9px] opacity-50 uppercase font-bold tracking-widest">Entry @ {pos.entryPrice.toFixed(1)}</div>
-                                                <div className="text-lg font-mono font-black italic tracking-tighter">₹{pos.currentPrice.toFixed(1)}</div>
+                                                <div className="text-lg font-mono font-black italic tracking-tighter text-blue-300">LTP ₹{pos.currentPrice.toFixed(1)}</div>
                                             </div>
                                             <div className={`text-xl font-mono font-black ${pos.pnl >= 0 ? 'text-emerald-300' : 'text-white'}`}>
                                                 {pos.pnl >= 0 ? '+' : ''}{pos.pnl.toFixed(1)}
