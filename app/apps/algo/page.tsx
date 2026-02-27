@@ -44,7 +44,13 @@ export default function AlgoDashboard() {
         signals,
         config,
         resetStats,
-        closePosition
+        closePosition,
+        activeStrategy,
+        setActiveStrategy,
+        liveVix,
+        liveVix5dAvg,
+        capitalUsed,
+        availableCapital
     } = useAlgoStore();
 
     const { brokerCredentials, addToWatchlist, watchlist: tradingWatchlist, isConnected } = useTradingStore();
@@ -88,14 +94,28 @@ export default function AlgoDashboard() {
         );
     }, [tradingWatchlist, selectedIndex]);
 
-    // Ensure the index itself is in the watchlist so the WebSocket tracks it
+    // Ensure the index + India VIX are in the watchlist so the WebSocket tracks them
     useEffect(() => {
         if (brokerCredentials && isConnected) {
-            const securityId = '25'; // BANKNIFTY
-            if (!tradingWatchlist.find(w => w.securityId === securityId)) {
+            // BANKNIFTY Spot Index
+            const bnSecurityId = '25';
+            if (!tradingWatchlist.find(w => w.securityId === bnSecurityId)) {
                 addToWatchlist({
-                    securityId,
+                    securityId: bnSecurityId,
                     symbol: selectedIndex,
+                    exchange: 'NSE',
+                    segment: 'IDX_I',
+                    ltp: 0,
+                    change: 0,
+                    changePercent: 0
+                });
+            }
+            // India VIX – securityId 21, segment IDX_I (from Dhan instrument master)
+            const vixSecurityId = '21';
+            if (!tradingWatchlist.find(w => w.securityId === vixSecurityId)) {
+                addToWatchlist({
+                    securityId: vixSecurityId,
+                    symbol: 'India VIX',
                     exchange: 'NSE',
                     segment: 'IDX_I',
                     ltp: 0,
@@ -359,12 +379,28 @@ export default function AlgoDashboard() {
         }
     }, [brokerCredentials, selectedIndex]);
 
+    // Auto-initialize zones/contracts on page load
     useEffect(() => {
         if (brokerCredentials && !hasInitialized.current && zones.length === 0) {
             hasInitialized.current = true;
             fetchHistoryAndPlan();
         }
     }, [brokerCredentials, zones.length]);
+
+    // Auto-refresh contracts when algo starts (in case they weren't loaded, or strike needs roll)
+    const contractsLoadedRef = useRef(false);
+    useEffect(() => {
+        if (!isRunning || !brokerCredentials) return;
+        const symbol = selectedIndex;
+        const hasContracts = !!(useAlgoStore.getState().monitoredContracts[symbol]?.ce ||
+            useAlgoStore.getState().monitoredContracts[symbol]?.pe);
+        if (!hasContracts && !contractsLoadedRef.current) {
+            contractsLoadedRef.current = true;
+            console.log('[AlgoRunner] Contracts missing — auto-fetching on algo start...');
+            fetchHistoryAndPlan();
+        }
+        if (!isRunning) contractsLoadedRef.current = false;
+    }, [isRunning, brokerCredentials, selectedIndex]);
 
     const formatCurrency = (val: number) => {
         return new Intl.NumberFormat('en-IN', {
@@ -404,9 +440,58 @@ export default function AlgoDashboard() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <div className="hidden md:flex flex-col items-end px-4 border-r border-white/5">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Available Capital</span>
-                            <span className="text-sm font-mono font-bold text-white tracking-tight">{formatCurrency(config.initialCapital)}</span>
+                        {/* Strategy Selector */}
+                        <div className="hidden md:flex items-center gap-1 p-1 bg-white/5 border border-white/10 rounded-xl">
+                            <button
+                                onClick={() => { if (!isRunning) setActiveStrategy('PDLS_VIX'); }}
+                                title={isRunning ? 'Stop algo before switching' : 'PDLS-VIX Liquidity Reversal'}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all ${activeStrategy === 'PDLS_VIX'
+                                    ? 'bg-violet-600 text-white shadow-md shadow-violet-500/30'
+                                    : 'text-slate-400 hover:text-slate-200'
+                                    } ${isRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                            >
+                                PDLS-VIX
+                            </button>
+                            <button
+                                onClick={() => { if (!isRunning) setActiveStrategy('SL_HUNT'); }}
+                                title={isRunning ? 'Stop algo before switching' : 'SL Hunt Reversal'}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all ${activeStrategy === 'SL_HUNT'
+                                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                                    : 'text-slate-400 hover:text-slate-200'
+                                    } ${isRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                            >
+                                SL Hunt
+                            </button>
+                        </div>
+
+                        {/* Live Capital Meter */}
+                        <div className="hidden md:flex flex-col gap-1 px-4 border-r border-white/5 min-w-[160px]">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Capital</span>
+                                <span className="text-[9px] font-bold text-slate-500">
+                                    ₹{(config.initialCapital / 1000).toFixed(0)}K total
+                                </span>
+                            </div>
+                            {/* Bar */}
+                            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full rounded-full transition-all duration-700"
+                                    style={{
+                                        width: `${Math.min(100, (capitalUsed / config.initialCapital) * 100).toFixed(1)}%`,
+                                        background: capitalUsed > config.initialCapital * 0.7
+                                            ? 'linear-gradient(90deg,#f43f5e,#fb7185)'
+                                            : 'linear-gradient(90deg,#3b82f6,#6366f1)'
+                                    }}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-mono font-bold text-rose-400">
+                                    {capitalUsed > 0 ? `₹${(capitalUsed / 1000).toFixed(1)}K used` : 'Idle'}
+                                </span>
+                                <span className="text-[10px] font-mono font-bold text-emerald-400">
+                                    ₹{(availableCapital / 1000).toFixed(1)}K free
+                                </span>
+                            </div>
                         </div>
                         <button
                             onClick={() => setRunning(!isRunning)}
@@ -455,12 +540,109 @@ export default function AlgoDashboard() {
                     ))}
                 </div>
 
-                {/* Left Panel: Plan & Live Feed */}
-                <div className="col-span-12 lg:col-span-8 space-y-6">
+                {/* ── Real-time Strategy Architecture Panel ── */}
+                {(() => {
+                    const vixCond = liveVix > 25 ? 'AVOID' : liveVix < 10 ? 'AVOID' : liveVix >= liveVix5dAvg * 1.03 ? 'GOOD' : liveVix <= liveVix5dAvg * 0.97 ? 'AVOID' : 'NEUTRAL';
+                    const vixItem = tradingWatchlist.find(w => w.securityId === '21');
+                    const bnItem = tradingWatchlist.find(w => w.securityId === '25');
+                    const lastSignal = signals[0];
+                    const pdhZone = zones.find(z => z.description === 'PDH');
+                    const pdlZone = zones.find(z => z.description === 'PDL');
 
-                    {/* Real-time Chart */}
-                    <section className="h-[450px] w-full mb-12">
-                        <div className="flex items-center justify-between mb-4">
+                    const nodes = [
+                        {
+                            label: 'WebSocket Feed',
+                            value: isConnected ? 'LIVE' : 'OFFLINE',
+                            sub: isConnected ? `${tradingWatchlist.length} instruments tracked` : 'Not connected',
+                            color: isConnected ? 'emerald' : 'rose',
+                            dot: isConnected,
+                        },
+                        {
+                            label: 'India VIX',
+                            value: vixItem?.ltp ? vixItem.ltp.toFixed(2) : (liveVix > 0 ? liveVix.toFixed(2) : '--'),
+                            sub: `Condition: ${vixCond} · 5d avg: ${liveVix5dAvg.toFixed(2)}`,
+                            color: vixCond === 'GOOD' ? 'emerald' : vixCond === 'AVOID' ? 'rose' : 'amber',
+                            dot: vixCond === 'GOOD',
+                        },
+                        {
+                            label: 'BankNifty Spot',
+                            value: bnItem?.ltp ? bnItem.ltp.toFixed(0) : '--',
+                            sub: `Chg: ${bnItem?.changePercent !== undefined ? (bnItem.changePercent > 0 ? '+' : '') + bnItem.changePercent.toFixed(2) + '%' : '--'}`,
+                            color: (bnItem?.changePercent ?? 0) >= 0 ? 'blue' : 'rose',
+                            dot: !!bnItem?.ltp,
+                        },
+                        {
+                            label: 'Liquidity Zones',
+                            value: zones.length > 0 ? `${zones.length} Zones` : 'Building...',
+                            sub: pdhZone && pdlZone ? `PDH: ${pdhZone.price.toFixed(0)} · PDL: ${pdlZone.price.toFixed(0)}` : 'Warmup pending',
+                            color: zones.length > 0 ? 'violet' : 'slate',
+                            dot: zones.length > 0,
+                        },
+                        {
+                            label: 'Signal Engine',
+                            value: activeStrategy === 'PDLS_VIX' ? 'PDLS-VIX' : 'SL-Hunt',
+                            sub: lastSignal ? `Last: ${lastSignal.reason.slice(0, 32)}…` : 'No signal yet',
+                            color: activeStrategy === 'PDLS_VIX' ? 'violet' : 'blue',
+                            dot: isRunning,
+                        },
+                        {
+                            label: 'Capital Deployed',
+                            value: capitalUsed > 0 ? `₹${(capitalUsed / 1000).toFixed(1)}K` : 'Idle',
+                            sub: `Free: ₹${(availableCapital / 1000).toFixed(1)}K · ${capitalUsed > 0 ? ((capitalUsed / config.initialCapital) * 100).toFixed(0) + '% used' : '0% used'}`,
+                            color: capitalUsed > config.initialCapital * 0.7 ? 'rose' : capitalUsed > 0 ? 'amber' : 'emerald',
+                            dot: capitalUsed > 0,
+                        },
+                    ];
+
+                    const colorMap: Record<string, string> = {
+                        emerald: 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400',
+                        rose: 'border-rose-500/20 bg-rose-500/5 text-rose-400',
+                        blue: 'border-blue-500/20 bg-blue-500/5 text-blue-400',
+                        amber: 'border-amber-500/20 bg-amber-500/5 text-amber-400',
+                        violet: 'border-violet-500/20 bg-violet-500/5 text-violet-400',
+                        slate: 'border-white/10 bg-white/3 text-slate-400',
+                    };
+                    const dotMap: Record<string, string> = {
+                        emerald: 'bg-emerald-400', rose: 'bg-rose-400', blue: 'bg-blue-400',
+                        amber: 'bg-amber-400', violet: 'bg-violet-400', slate: 'bg-slate-500',
+                    };
+
+                    return (
+                        <div className="col-span-12">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="h-px flex-1 bg-white/5" />
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Market Architecture · Real-time Node Status</span>
+                                <div className="h-px flex-1 bg-white/5" />
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                                {nodes.map((node, i) => (
+                                    <div key={i} className={`rounded-2xl border p-4 ${colorMap[node.color]} transition-all`}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-[9px] font-bold uppercase tracking-widest opacity-70">{node.label}</span>
+                                            <div className={`w-1.5 h-1.5 rounded-full ${node.dot ? dotMap[node.color] + ' animate-pulse' : 'bg-slate-700'}`} />
+                                        </div>
+                                        <div className="text-base font-mono font-black tracking-tight mb-1">{node.value}</div>
+                                        <div className="text-[9px] opacity-60 leading-tight">{node.sub}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Flow line connecting the nodes visually */}
+                            <div className="flex items-center gap-1 mt-3 px-2 overflow-hidden">
+                                {['Dhan WS', '→', 'VIX Filter', '→', 'PDLS Zones', '→', 'Signal Engine', '→', 'Risk Guard', '→', 'Trade Exec'].map((step, i) => (
+                                    <span key={i} className={`text-[9px] font-bold tracking-widest ${step === '→' ? 'text-white/10' :
+                                        isRunning ? 'text-slate-400' : 'text-slate-700'
+                                        }`}>{step}</span>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* ── Full-width Real-time Chart ── */}
+                <div className="col-span-12">
+                    <section className="h-[580px] w-full">
+                        <div className="flex items-center justify-between mb-3">
                             <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
                                 {['BANKNIFTY'].map(s => (
                                     <button
@@ -493,8 +675,13 @@ export default function AlgoDashboard() {
                             signals={signals}
                             zones={zones}
                             symbol={selectedIndex}
+                            height={540}
                         />
                     </section>
+                </div>
+
+                {/* Left Panel: Plan & Live Feed */}
+                <div className="col-span-12 lg:col-span-8 space-y-6">
 
                     {/* Zones / Daily Plan */}
                     <section className="bg-white/[0.03] border border-white/5 rounded-3xl overflow-hidden">

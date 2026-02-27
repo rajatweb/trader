@@ -6,8 +6,10 @@ export interface AlgoSignal {
     reason: string;
     strength: number; // 0 to 1
     timestamp: number;
-    target?: number; // Optional dynamically calculated target price
-    sl?: number;     // Optional dynamically calculated stop loss
+    target?: number; // Optional dynamically calculated target price multiplier
+    sl?: number;     // Optional dynamically calculated stop loss multiplier
+    targetPoints?: number; // Optional absolute points for TP (e.g., 45)
+    slPoints?: number;     // Optional absolute points for SL (e.g., 30)
 }
 
 export interface TradingZone {

@@ -93,8 +93,13 @@ export function useMarketFeed() {
         // Update watchlist and positions
         updateWatchlistPrices(priceUpdates);
 
-        // Instantly update Algorithm Active Engagements P&L bypassing the 3s loop
+        // India VIX live feed: securityId 21, segment IDX_I (NSE Index)
         const algoState = useAlgoStore.getState();
+        const vixUpdate = priceUpdates.find(u => u.securityId === '21');
+        if (vixUpdate?.ltp && vixUpdate.ltp > 0) {
+            algoState.setLiveVix(vixUpdate.ltp);
+        }
+
         if (algoState.activePositions.length > 0) {
             priceUpdates.forEach(update => {
                 // Find matching active position by exact ID
