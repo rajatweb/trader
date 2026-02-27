@@ -507,10 +507,10 @@ export default function AlgoDashboard() {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-12 gap-6 pb-24">
+            <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-12 gap-5 pb-32">
 
                 {/* Statistics Grid */}
-                <div className="col-span-12 grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="col-span-12 grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
                         { label: 'Day Realized P&L', value: stats.totalPnl, icon: Wallet, color: stats.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400', suffix: 'P&L' },
                         { label: 'Win Rate', value: stats.totalTrades > 0 ? (stats.winningTrades / stats.totalTrades * 100).toFixed(1) : '0', icon: Target, color: 'text-blue-400', suffix: '%' },
@@ -641,18 +641,23 @@ export default function AlgoDashboard() {
 
                 {/* ── Full-width Real-time Chart ── */}
                 <div className="col-span-12">
-                    <section className="h-[580px] w-full">
-                        <div className="flex items-center justify-between mb-3">
-                            <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-                                {['BANKNIFTY'].map(s => (
-                                    <button
-                                        key={s}
-                                        onClick={() => setSelectedIndex(s)}
-                                        className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${selectedIndex === s ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                                    >
-                                        {s}
-                                    </button>
-                                ))}
+                    {/* flex-col: toolbar is fixed height, chart fills the rest */}
+                    <div className="flex flex-col" style={{ height: 580 }}>
+                        {/* Toolbar */}
+                        <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+                                    {['BANKNIFTY'].map(s => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setSelectedIndex(s)}
+                                            className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${selectedIndex === s ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            {s}
+                                        </button>
+                                    ))}
+                                </div>
+                                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">1 min · Live</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <RefreshCw
@@ -670,36 +675,42 @@ export default function AlgoDashboard() {
                                 </button>
                             </div>
                         </div>
-                        <AlgoRealtimeChart
-                            data={chartData}
-                            signals={signals}
-                            zones={zones}
-                            symbol={selectedIndex}
-                            height={540}
-                        />
-                    </section>
+                        {/* Chart — flex-1 + min-h-0 ensures it never bleeds past the parent */}
+                        <div className="flex-1 min-h-0">
+                            <AlgoRealtimeChart
+                                data={chartData}
+                                signals={signals}
+                                zones={zones}
+                                symbol={selectedIndex}
+                            />
+                        </div>
+                    </div>
                 </div>
 
                 {/* Left Panel: Plan & Live Feed */}
-                <div className="col-span-12 lg:col-span-8 space-y-6">
+                <div className="col-span-12 lg:col-span-8 space-y-5">
 
                     {/* Zones / Daily Plan */}
                     <section className="bg-white/[0.03] border border-white/5 rounded-3xl overflow-hidden">
-                        <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+                        <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
                             <div className="flex items-center gap-3">
                                 <span className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                                    <Layers size={18} />
+                                    <Layers size={16} />
                                 </span>
-                                <h2 className="font-bold text-white tracking-tight">Market Architecture <span className="text-slate-500 font-medium text-sm ml-2">(Market Analysis)</span></h2>
+                                <div>
+                                    <h2 className="text-sm font-bold text-white tracking-tight leading-none">Market Architecture</h2>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">PDH · PDL · Zones · Daily Bias</p>
+                                </div>
                             </div>
                             <button
                                 onClick={fetchHistoryAndPlan}
-                                className="p-2 hover:bg-white/5 rounded-lg text-slate-400 transition-all active:rotate-180 duration-500"
+                                className="p-2 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white transition-all active:rotate-180 duration-500"
+                                title="Refresh zones"
                             >
-                                <RefreshCw size={16} />
+                                <RefreshCw size={14} />
                             </button>
                         </div>
-                        <div className="p-6">
+                        <div className="p-5">
                             {/* Algo Logic Snippet */}
                             <div className="mb-6 p-4 bg-blue-500/5 rounded-2xl border border-blue-500/10 relative overflow-hidden">
                                 <h3 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-3 flex items-center gap-2">
