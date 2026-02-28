@@ -356,12 +356,12 @@ export default function BacktestPage() {
                                 </div>
                             </div>
                             <div className="flex-1 min-h-0">
-                                <AlgoRealtimeChart
+                                {/* <AlgoRealtimeChart
                                     data={candles}
-                                    signals={chartSignals}
+                                    signals={""}
                                     zones={[]}
                                     symbol="BANKNIFTY"
-                                />
+                                /> */}
                             </div>
                         </div>
 
@@ -403,15 +403,15 @@ export default function BacktestPage() {
                                         key={m.month}
                                         onClick={() => setActiveMonth(activeMonth === m.month ? null : m.month)}
                                         className={`text-left rounded-2xl border p-4 transition-all hover:bg-white/5 ${activeMonth === m.month
-                                                ? 'border-violet-500/40 bg-violet-500/5'
-                                                : 'border-white/5 bg-white/[0.02]'
+                                            ? 'border-violet-500/40 bg-violet-500/5'
+                                            : 'border-white/5 bg-white/[0.02]'
                                             }`}
                                     >
                                         <div className="flex items-center justify-between mb-3">
                                             <span className="text-xs font-bold text-white">{m.label}</span>
                                             <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${m.winRate >= 60 ? 'bg-emerald-500/15 text-emerald-400' :
-                                                    m.winRate >= 45 ? 'bg-amber-500/15 text-amber-400' :
-                                                        'bg-rose-500/15 text-rose-400'
+                                                m.winRate >= 45 ? 'bg-amber-500/15 text-amber-400' :
+                                                    'bg-rose-500/15 text-rose-400'
                                                 }`}>{m.winRate}% WR</span>
                                         </div>
                                         <div className={`text-2xl font-black font-mono mb-1 ${m.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -492,9 +492,9 @@ export default function BacktestPage() {
                                                 </td>
                                                 <td className="px-4 py-2.5">
                                                     <span className={`text-[9px] font-bold ${t.exitReason === 'TARGET' ? 'text-emerald-400' :
-                                                            t.exitReason === 'SL' ? 'text-rose-400' :
-                                                                t.exitReason === 'EODCLOSE' ? 'text-amber-400' :
-                                                                    'text-slate-500'
+                                                        t.exitReason === 'SL' ? 'text-rose-400' :
+                                                            t.exitReason === 'EODCLOSE' ? 'text-amber-400' :
+                                                                'text-slate-500'
                                                         }`}>{t.exitReason}</span>
                                                 </td>
                                             </tr>
