@@ -1,3 +1,4 @@
+import { MarketSnapshot } from './ml';
 
 export interface AlgoSignal {
     type: 'BUY' | 'SELL' | 'NONE';
@@ -10,6 +11,8 @@ export interface AlgoSignal {
     sl?: number;     // Optional dynamically calculated stop loss multiplier
     targetPoints?: number; // Optional absolute points for TP (e.g., 45)
     slPoints?: number;     // Optional absolute points for SL (e.g., 30)
+    features?: MarketSnapshot; // Legacy name, now Snapshot
+    snapshot?: MarketSnapshot; // Current name
 }
 
 export interface TradingZone {
@@ -22,6 +25,8 @@ export interface TradingZone {
 export interface TradingPlan {
     trend: 'SUPER_BULLISH' | 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'SUPER_BEARISH';
     maxTradesAllowed: number;
+    maxDailyLossPoints: number;
+    maxDailyProfitPoints: number;
     allowedDirections: ('BUY' | 'SELL')[];
     reasoning: string;
     generatedAt: number;

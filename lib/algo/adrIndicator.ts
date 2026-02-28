@@ -3,8 +3,6 @@ export interface AdrValues {
     adr1l: number;
     adr2h: number;
     adr2l: number;
-    adr3h: number;
-    adr3l: number;
     open: number;
 }
 
@@ -30,7 +28,7 @@ function getIstDateStr(timestampSeconds: number) {
     return offsetDate.toISOString().split('T')[0];
 }
 
-export function calculateADRx3(candles: any[], p1 = 14, p2 = 7, p3 = 5): CandleWithAdr[] {
+export function calculateADRx2(candles: any[], p1 = 14, p2 = 7): CandleWithAdr[] {
     if (!candles || candles.length === 0) return [];
 
     // 1. Group by daily date string to compute Daily OHLC
@@ -79,7 +77,6 @@ export function calculateADRx3(candles: any[], p1 = 14, p2 = 7, p3 = 5): CandleW
 
         const adr1 = getAdrs(p1);
         const adr2 = getAdrs(p2);
-        const adr3 = getAdrs(p3);
 
         const open = todaySummary.o; // exact today's actual open
 
@@ -89,18 +86,51 @@ export function calculateADRx3(candles: any[], p1 = 14, p2 = 7, p3 = 5): CandleW
             adr1l: adr1 > 0 ? open - (adr1 / 2) : 0,
             adr2h: adr2 > 0 ? open + (adr2 / 2) : 0,
             adr2l: adr2 > 0 ? open - (adr2 / 2) : 0,
-            adr3h: adr3 > 0 ? open + (adr3 / 2) : 0,
-            adr3l: adr3 > 0 ? open - (adr3 / 2) : 0,
         });
     }
 
-    // 3. Map the calculated daily values onto each 1-min candle!
-    return candles.map(c => {
+    // 3. Map values and calculate EMAs
+    let ema20 = 0;
+    let ema50 = 0;
+    let ema200 = 0;
+    const alpha20 = 2 / (20 + 1);
+    const alpha50 = 2 / (50 + 1);
+    const alpha200 = 2 / (200 + 1);
+    const volWindow: number[] = [];
+
+    return candles.map((c, idx) => {
         const dStr = getIstDateStr(c.time);
         const adrVals = dayAdrs.get(dStr);
+
+        // Find previous day's close
+        const dateIdx = datesOrdered.indexOf(dStr);
+        const prevDayStr = dateIdx > 0 ? datesOrdered[dateIdx - 1] : null;
+        const prevClose = prevDayStr ? dailyMap.get(prevDayStr)!.c : c.open;
+
+        // EMA Calculation
+        if (idx === 0) {
+            ema20 = c.close;
+            ema50 = c.close;
+            ema200 = c.close;
+        } else {
+            ema20 = (c.close - ema20) * alpha20 + ema20;
+            ema50 = (c.close - ema50) * alpha50 + ema50;
+            ema200 = (c.close - ema200) * alpha200 + ema200;
+        }
+
+        // Rolling Volume (last 20)
+        volWindow.push(c.volume || 0);
+        if (volWindow.length > 20) volWindow.shift();
+        const avgVol = volWindow.reduce((a, b) => a + b, 0) / volWindow.length;
+
         return {
             ...c,
-            adr: adrVals
+            adr: adrVals,
+            prevClose,
+            ema20,
+            ema50,
+            ema200,
+            avgVol
         };
     });
 }

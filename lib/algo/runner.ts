@@ -4,6 +4,7 @@ import { useTradingStore } from '../store/tradingStore';
 import { playAlgoSound } from '../utils/sound';
 import { TradingStrategy } from './strategy';
 import { TradingPlan } from './types';
+import { AlphaStrategist } from './ml';
 
 export function useAlgoRunner(chartData: any[] = []) {
     const {
@@ -17,6 +18,8 @@ export function useAlgoRunner(chartData: any[] = []) {
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
     const chartDataRef = useRef(chartData);
     const tradingPlanRef = useRef<TradingPlan | null>(null);
+    const strategistRef = useRef<AlphaStrategist>(new AlphaStrategist());
+    const lastExitTimeRef = useRef<number>(0);
 
     // Keep chart data ref current
     useEffect(() => {
@@ -32,6 +35,15 @@ export function useAlgoRunner(chartData: any[] = []) {
         }
 
         console.log(`[AlgoRunner] Started. Computing Pre-Market Analysis...`);
+
+        // Hydrate AI Brain from saved weights
+        fetch('/ml_weights.json').then(res => res.text()).then(text => {
+            if (text && text.length > 10) {
+                console.log(`[AlgoRunner] AI Brain Hydrated with pre-trained weights.`);
+                strategistRef.current.importJSON(text);
+            }
+        }).catch(() => console.log(`[AlgoRunner] No pre-trained weights found. Using fresh brain.`));
+
         const initialPlan = TradingStrategy.runPreMarketAnalysis(chartDataRef.current);
 
         if (initialPlan) {
@@ -61,8 +73,8 @@ export function useAlgoRunner(chartData: any[] = []) {
                         algoState.closePosition(pos.symbol, pos.currentPrice);
                         playAlgoSound('EXIT');
                     });
-                    console.log(`[AlgoRunner] Hard stop reached at ${tStr}. All positions closed.`);
                 }
+                lastExitTimeRef.current = Date.now();
                 return;
             }
 
@@ -88,9 +100,12 @@ export function useAlgoRunner(chartData: any[] = []) {
             if (latestCandles.length < 2) return;
 
             const currentCandle = latestCandles[latestCandles.length - 1];
-            const prevCandles = latestCandles.slice(0, -1);
+            const indexType = (config.symbols[0] === 'BANKNIFTY' || config.symbols[0] === 'NIFTY') ? config.symbols[0] : 'BANKNIFTY';
 
-            const signal = TradingStrategy.checkAdrSignal(currentCandle, prevCandles, tradingPlanRef.current);
+            const todayStr = new Date().toISOString().split('T')[0];
+            const tradesTodayCount = algoState.tradeHistory.filter(t => t.date === todayStr).length;
+
+            const signal = TradingStrategy.checkAiSignal(latestCandles, latestCandles.length - 1, indexType as any, strategistRef.current, tradesTodayCount, tradingPlanRef.current || undefined);
 
             if (signal.type !== 'NONE') {
                 console.log(`[AlgoRunner] SIGNAL GENERATED: ${signal.type} | ${signal.reason}`);
@@ -102,6 +117,12 @@ export function useAlgoRunner(chartData: any[] = []) {
                 const lot = config.lotSize[indexName] || 50;
 
                 const isCall = signal.type === 'BUY';
+
+                // Enforce 5-minute cool-down between trades
+                const minsSinceExit = (Date.now() - lastExitTimeRef.current) / 60000;
+                if (minsSinceExit < 5) {
+                    return;
+                }
 
                 // Select an In-The-Money Strike that hasn't been traded yet today
                 const targetStrike = TradingStrategy.getUntradedITMStrike(
@@ -141,7 +162,10 @@ export function useAlgoRunner(chartData: any[] = []) {
         }, 3000); // Check every 3 seconds
 
         return () => {
-            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                lastExitTimeRef.current = Date.now(); // Record exit for potential resume
+            }
         };
 
     }, [isRunning, brokerCredentials, config]);

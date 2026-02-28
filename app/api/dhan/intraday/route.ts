@@ -11,6 +11,26 @@ export async function POST(request: NextRequest) {
         }
 
         const client = new DhanClient({ clientId, accessToken });
+
+        // ── Redis Cache Layer ────────────────────────────────────────────────
+        const cacheKey = `dhan_v1:${params.securityId}_${params.fromDate}_${params.toDate}`;
+        let cachedData = null;
+        try {
+            const { Redis } = await import('@upstash/redis');
+            const redis = (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+                ? new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN })
+                : null;
+
+            if (redis) {
+                cachedData = await redis.get(cacheKey);
+                if (cachedData) {
+                    return NextResponse.json({ success: true, data: cachedData, source: 'cache' });
+                }
+            }
+        } catch (e) {
+            console.error("Redis Import/Get Error:", e);
+        }
+
         const dhanResponse = await client.getIntradayData(params as any);
 
         // Dhan returns data in columns: { open: [], high: [], ... }
@@ -50,6 +70,19 @@ export async function POST(request: NextRequest) {
                 });
                 formatted.push(candle);
             }
+            // ── Cache the Result ─────────────────────────────────────────────
+            try {
+                const { Redis } = await import('@upstash/redis');
+                const redis = (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+                    ? new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN })
+                    : null;
+                if (redis) {
+                    await redis.set(cacheKey, formatted, { ex: 604800 }); // 7 days
+                }
+            } catch (e) {
+                console.error("Redis Set Error:", e);
+            }
+
             return NextResponse.json({ success: true, data: formatted });
         }
 

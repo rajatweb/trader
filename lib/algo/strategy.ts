@@ -1,11 +1,12 @@
 import { AlgoSignal, TradingPlan } from './types';
 import { CandleWithAdr } from './adrIndicator';
+import { MarketSnapshot, AlphaStrategist } from './ml';
 
 /**
- * ADR Sniper Strategy
- * Intelligent Options Buying Strategy based on Average Daily Range bands
+ * AI-Driven Alpha Strategist
  */
 export class TradingStrategy {
+    // ... rest follows
 
     /**
      * Pre-Market Analysis generator.
@@ -46,38 +47,43 @@ export class TradingStrategy {
 
         // Trend Assessment
         let trend: TradingPlan['trend'] = 'NEUTRAL';
-        let maxTradesAllowed = 2; // Choppy days = low trades
+        let maxTradesAllowed = 3;
+        let maxDailyLossPoints = 120;
+        let maxDailyProfitPoints = 220; // 120 + 50 + 50
         const allowedDirections: ('BUY' | 'SELL')[] = ['BUY', 'SELL'];
         let reasoning = '';
 
         // If yesterday closed above ADR1 High, it's super bullish momentum
         if (yesterdayClose > adr.adr1h) {
             trend = 'SUPER_BULLISH';
-            maxTradesAllowed = 5;
+            maxTradesAllowed = 3;
             allowedDirections.splice(0, allowedDirections.length, 'BUY'); // Only taking CE trades
             reasoning = `Yesterday closed extremely strong above ADR1 High (${adr.adr1h.toFixed(0)}), indicating huge momentum. Aggressive Long bias.`;
         } else if (yesterdayClose > adr.open) {
             trend = 'BULLISH';
             maxTradesAllowed = 3;
-            reasoning = `Yesterday closed positive above open. Moderate Long bias. Reversion trades allowed.`;
+            reasoning = `Yesterday closed positive above open. Moderate Long bias.`;
         } else if (yesterdayClose < adr.adr1l) {
             trend = 'SUPER_BEARISH';
-            maxTradesAllowed = 5;
+            maxTradesAllowed = 3;
             allowedDirections.splice(0, allowedDirections.length, 'SELL'); // Only taking PE trades
             reasoning = `Yesterday closed extremely weak below ADR1 Low (${adr.adr1l.toFixed(0)}), indicating huge downside momentum. Aggressive Short bias.`;
         } else if (yesterdayClose < adr.open) {
             trend = 'BEARISH';
             maxTradesAllowed = 3;
-            reasoning = `Yesterday closed negative below open. Moderate Short bias. Reversion trades allowed.`;
+            reasoning = `Yesterday closed negative below open. Moderate Short bias.`;
         } else {
             trend = 'NEUTRAL';
             maxTradesAllowed = 2;
-            reasoning = `Yesterday closed around the open. Market is consolidating. Expecting chop, restricted to high-confidence mean reversion trades only.`;
+            maxDailyLossPoints = 80;
+            reasoning = `Yesterday closed around the open. Market is consolidating. Restricted to high-confidence scalps.`;
         }
 
         return {
             trend,
             maxTradesAllowed,
+            maxDailyLossPoints,
+            maxDailyProfitPoints,
             allowedDirections,
             reasoning,
             generatedAt: Date.now()
@@ -85,110 +91,229 @@ export class TradingStrategy {
     }
 
     /**
+     * Builds a normalized MarketSnapshot for the AI
+     * Now purely based on Sentiment, Trend & EMAs (ADR disabled)
+     */
+    static buildSnapshot(allCandles: CandleWithAdr[], currentIdx: number, indexType: 'NIFTY' | 'BANKNIFTY', tradesTaken: number = 0): MarketSnapshot | null {
+        const currentCandle = allCandles[currentIdx];
+        if (!currentCandle) return null;
+
+        // Essential EMA data
+        const ema20 = currentCandle.ema20 || currentCandle.close;
+        const ema50 = currentCandle.ema50 || currentCandle.close;
+        const ema200 = currentCandle.ema200 || currentCandle.close;
+
+        const timeObj = new Date(currentCandle.time * 1000 + 330 * 60000);
+        const morning = 9 * 60 + 15;
+        const totalMins = timeObj.getUTCHours() * 60 + timeObj.getUTCMinutes();
+        const timeProgress = (totalMins - morning) / (6 * 60 + 15);
+
+        const range = currentCandle.high - currentCandle.low || 1;
+        const bodySize = Math.abs(currentCandle.close - currentCandle.open);
+        const pc = currentCandle.prevClose || currentCandle.open;
+        const prevDayCloseRel = (currentCandle.close - pc) / pc;
+
+        // ── 1. Closing Structure & Gap Analysis (V4) ───────────────────────
+        const gapSize = (currentCandle.open - pc) / pc;
+        let gapType = 0; // 0: Neutral, 1: Trap (Reverse), -1: Pro (Continuation)
+
+        let closingStructure = 0;
+        let yHigh = currentCandle.high;
+        let yLow = currentCandle.low;
+        const currDate = new Date(currentCandle.time * 1000).getUTCDate();
+        let yesterdayEndIdx = -1;
+        for (let i = currentIdx - 1; i >= 0; i--) {
+            if (new Date(allCandles[i].time * 1000).getUTCDate() !== currDate) {
+                yesterdayEndIdx = i;
+                break;
+            }
+        }
+
+        if (yesterdayEndIdx !== -1) {
+            // Find yesterday's high/low for trap detection
+            let searchIdx = yesterdayEndIdx;
+            const targetDate = new Date(allCandles[searchIdx].time * 1000).getUTCDate();
+            let yMax = -Infinity;
+            let yMin = Infinity;
+            while (searchIdx >= 0 && new Date(allCandles[searchIdx].time * 1000).getUTCDate() === targetDate) {
+                if (allCandles[searchIdx].high > yMax) yMax = allCandles[searchIdx].high;
+                if (allCandles[searchIdx].low < yMin) yMin = allCandles[searchIdx].low;
+                searchIdx--;
+            }
+            yHigh = yMax;
+            yLow = yMin;
+
+            if (yesterdayEndIdx > 30) {
+                const yesterdayFinalRange = allCandles.slice(yesterdayEndIdx - 30, yesterdayEndIdx);
+                const yOpen = yesterdayFinalRange[0].open;
+                const yClose = yesterdayFinalRange[yesterdayFinalRange.length - 1].close;
+                closingStructure = (yClose - yOpen) / yOpen;
+            }
+        }
+
+        if (gapSize > 0.002 && closingStructure < -0.001) gapType = 1;
+        else if (gapSize < -0.002 && closingStructure > 0.001) gapType = 1;
+        else if (Math.abs(gapSize) > 0.003) gapType = -1;
+
+        const prevDayHighRel = (currentCandle.close - yHigh) / yHigh;
+        const prevDayLowRel = (currentCandle.close - yLow) / yLow;
+
+        // ── 2. Structural Patterns ────────────────────────────────────────
+        let isLiquidityGrab = 0;
+        if (currentCandle.high >= pc && currentCandle.close < pc && gapSize < 0) isLiquidityGrab = 1;
+        if (currentCandle.low <= pc && currentCandle.close > pc && gapSize > 0) isLiquidityGrab = 1;
+
+        let swingLowDef = 0;
+        if (currentIdx > 15) {
+            const last15 = allCandles.slice(currentIdx - 15, currentIdx);
+            const minLowLast15 = Math.min(...last15.map(c => c.low));
+            if (currentCandle.low < minLowLast15) swingLowDef = 1;
+        }
+
+        let rangeStatus = 0;
+        if (currentIdx > 30) {
+            const last30 = allCandles.slice(currentIdx - 30, currentIdx);
+            const h = Math.max(...last30.map(c => c.high));
+            const l = Math.min(...last30.map(c => c.low));
+            const spread = (h - l) / currentCandle.close;
+            rangeStatus = Math.max(0, 1 - (spread / 0.005));
+        }
+
+        let rangeBreakout = 0;
+        let isFakeBreakout = 0;
+        if (currentIdx > 30) {
+            const rangeWindow = allCandles.slice(currentIdx - 30, currentIdx);
+            const h30 = Math.max(...rangeWindow.map(c => c.high));
+            const l30 = Math.min(...rangeWindow.map(c => c.low));
+
+            if (currentCandle.close > h30) rangeBreakout = 1;
+            else if (currentCandle.close < l30) rangeBreakout = -1;
+
+            if (currentIdx > 0) {
+                const prev = allCandles[currentIdx - 1];
+                if ((prev.close > h30 && currentCandle.close <= h30) || (prev.close < l30 && currentCandle.close >= l30)) {
+                    isFakeBreakout = 1;
+                }
+            }
+        }
+
+        // ── 3. Morning Bias & Volatility ─────────────────────────────────
+        let morningSentiment = 0;
+        let dayOpen = currentCandle.open;
+        for (let i = currentIdx; i >= Math.max(0, currentIdx - 400); i--) {
+            if (new Date(allCandles[i].time * 1000).getUTCDate() !== currDate) {
+                dayOpen = allCandles[i + 1].open;
+                break;
+            }
+            if (i === 0) dayOpen = allCandles[0].open;
+        }
+        if (dayOpen > 0) morningSentiment = (currentCandle.close - dayOpen) / (dayOpen * 0.003);
+
+        const momentum = (currentCandle.close - currentCandle.open) / (currentCandle.open || 1);
+        const sentiment = Math.max(-1, Math.min(1, momentum * 1000));
+        const volatility = range / (currentCandle.open * 0.002);
+
+        let avgSessionVol = 0;
+        if (totalMins < morning + 15) avgSessionVol = volatility;
+
+        const stopHuntZone = (Math.abs(currentCandle.close - pc) / pc < 0.0005) ? 1 : 0;
+        const orderFlowBias = sentiment * ((currentCandle.volume || 0) / (currentCandle.avgVol || 1));
+
+        // Trend Assessment Logic
+        let trendStrength = 0.5;
+        if (ema20 > ema50 && ema50 > ema200) trendStrength = 1.0;
+        else if (ema20 > ema50) trendStrength = 0.75;
+        else if (ema20 < ema50 && ema50 < ema200) trendStrength = 0.0;
+        else if (ema20 < ema50) trendStrength = 0.25;
+
+        return {
+            marketSentiment: sentiment,
+            trendStrength,
+            volatility: Math.min(1, volatility),
+            prevDayCloseRel,
+            prevDayHighRel,
+            prevDayLowRel,
+            gapType,
+            gapSize,
+            priceRelToClose: (currentCandle.close - pc) / pc,
+            isLiquidityGrab,
+            closingStructure,
+            rangeBreakout,
+            tradesTakenToday: tradesTaken === 0 ? 0 : (tradesTaken === 1 ? 0.5 : 1.0),
+            morningSentiment: Math.max(-1.5, Math.min(1.5, morningSentiment)),
+            isFakeBreakout,
+            stopHuntZone,
+            ema20Spread: (currentCandle.close - ema20) / currentCandle.close,
+            ema50Spread: (currentCandle.close - ema50) / currentCandle.close,
+            ema200Spread: (currentCandle.close - ema200) / currentCandle.close,
+            emaTrend: ema20 > ema50 ? 1 : 0,
+            bodyPct: bodySize / range,
+            wickRatio: (range - bodySize) / range,
+            volumeZ: (currentCandle.volume || 0) / (currentCandle.avgVol || 1),
+            timeOfDay: Math.min(1, Math.max(0, timeProgress)),
+            indexType: indexType === 'BANKNIFTY' ? 1 : 0,
+            priceRelToOpen: (currentCandle.close - (currentCandle.open || 0)) / 1000 + 0.5,
+            momentum,
+            swingLowDef,
+            rangeStatus: Math.min(1, rangeStatus),
+            avgSessionVol,
+            orderFlowBias,
+            riskRewardRatio: 3.0
+        };
+    }
+
+    /**
+     * Builds a sequence of snapshots for the AI context
+     */
+    static buildSnapshotWindow(allCandles: CandleWithAdr[], currentIdx: number, windowSize: number, indexType: 'NIFTY' | 'BANKNIFTY', tradesTaken: number = 0): MarketSnapshot[] {
+        const window: MarketSnapshot[] = [];
+        for (let i = Math.max(0, currentIdx - windowSize + 1); i <= currentIdx; i++) {
+            const snap = this.buildSnapshot(allCandles, i, indexType, tradesTaken);
+            if (snap) window.push(snap);
+        }
+        return window;
+    }
+
+    /**
      * Checks the 1-minute candle sequence against ADR lines 
      * and the active trading plan to generate exact signals.
      */
-    static checkAdrSignal(
-        currentCandle: CandleWithAdr,
-        prevCandles: CandleWithAdr[],
-        plan: TradingPlan | null
+    static checkAiSignal(
+        allCandles: CandleWithAdr[],
+        currentIdx: number,
+        indexType: 'NIFTY' | 'BANKNIFTY',
+        strategist: AlphaStrategist,
+        tradesTaken: number = 0,
+        plan?: TradingPlan
     ): AlgoSignal {
-        if (!plan || !currentCandle.adr) {
-            return { type: 'NONE', price: 0, symbol: '', reason: 'No plan or ADR data', strength: 0, timestamp: Date.now() };
+        const currentCandle = allCandles[currentIdx];
+        const snaps = this.buildSnapshotWindow(allCandles, currentIdx, 3, indexType, tradesTaken);
+        if (snaps.length === 0) return { type: 'NONE', price: 0, symbol: '', reason: 'No data', strength: 0, timestamp: Date.now() };
+
+        const decision = strategist.decide(snaps);
+
+        if (decision.type === 'WAIT') {
+            return { type: 'NONE', price: 0, symbol: '', reason: 'AI Neutral', strength: 0, timestamp: Date.now() };
         }
 
-        const adr = currentCandle.adr;
-        const lastCandle = prevCandles[prevCandles.length - 1];
-        if (!lastCandle) return { type: 'NONE', price: 0, symbol: '', reason: 'No history', strength: 0, timestamp: Date.now() };
+        const signalType = decision.type === 'LONG' ? 'BUY' : 'SELL';
 
-        // Signal A: Trend Following Breakout of Inner Bands
-        // MUST align with the TradingPlan's overall trend
-        if (plan.allowedDirections.includes('BUY') && currentCandle.close > adr.adr1h && lastCandle.close <= adr.adr1h) {
-            if ((currentCandle.volume || 0) > (lastCandle.volume || 0)) { // Volume confirmation
-                return {
-                    type: 'BUY',
-                    price: currentCandle.close,
-                    symbol: 'INDEX',
-                    reason: `Trend Breakout: Crossed ADR1 High with volume confirmation. Trend is ${plan.trend}`,
-                    strength: 0.85,
-                    timestamp: Date.now(),
-                    targetPoints: Math.abs(adr.adr2h - currentCandle.close), // Target ADR2
-                    slPoints: Math.abs(currentCandle.close - currentCandle.low) + 10 // SL below breakout candle
-                };
-            }
+        // Filter by Trading Plan Bias if provided
+        if (plan && !plan.allowedDirections.includes(signalType)) {
+            return { type: 'NONE', price: 0, symbol: '', reason: `Bias Filter: ${signalType} restricted`, strength: 0, timestamp: Date.now() };
         }
 
-        if (plan.allowedDirections.includes('SELL') && currentCandle.close < adr.adr1l && lastCandle.close >= adr.adr1l) {
-            if ((currentCandle.volume || 0) > (lastCandle.volume || 0)) {
-                return {
-                    type: 'SELL',
-                    price: currentCandle.close,
-                    symbol: 'INDEX',
-                    reason: `Trend Breakdown: Crossed ADR1 Low with volume confirmation. Trend is ${plan.trend}`,
-                    strength: 0.85,
-                    timestamp: Date.now(),
-                    targetPoints: Math.abs(currentCandle.close - adr.adr2l), // Target ADR2
-                    slPoints: Math.abs(currentCandle.high - currentCandle.close) + 10
-                };
-            }
-        }
-
-        // Signal B: Extreme Mean Reversion at Outer Bands (Allowed in almost all plans)
-        // ADR3 touches are pure elastic rebounds.
-        if (currentCandle.high >= adr.adr3h && currentCandle.close < currentCandle.open) { // Touching ADR3 High and reverting red
-            return {
-                type: 'SELL',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `Extreme Mean Reversion: Rejection at ADR3 High. High probability fade.`,
-                strength: 0.95,
-                timestamp: Date.now(),
-                targetPoints: Math.abs(currentCandle.close - adr.adr1h), // Target back inside to ADR1
-                slPoints: Math.abs(adr.adr3h - currentCandle.close) + 15  // Tight SL just above ADR3
-            };
-        }
-
-        if (currentCandle.low <= adr.adr3l && currentCandle.close > currentCandle.open) { // Touching ADR3 Low and reverting green
-            return {
-                type: 'BUY',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `Extreme Mean Reversion: Rejection at ADR3 Low. High probability bounce.`,
-                strength: 0.95,
-                timestamp: Date.now(),
-                targetPoints: Math.abs(adr.adr1l - currentCandle.close),
-                slPoints: Math.abs(currentCandle.close - adr.adr3l) + 15
-            };
-        }
-
-        // ADR2 Mean Reversion (Needs to be cautious if trend is "SUPER")
-        if (plan.trend !== 'SUPER_BULLISH' && currentCandle.high >= adr.adr2h && currentCandle.close < currentCandle.open) {
-            return {
-                type: 'SELL',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `Mean Reversion: Rejection at ADR2 High.`,
-                strength: 0.8,
-                timestamp: Date.now(),
-                targetPoints: Math.abs(currentCandle.close - adr.adr1h),
-                slPoints: Math.abs(adr.adr2h - currentCandle.close) + 15
-            };
-        }
-
-        if (plan.trend !== 'SUPER_BEARISH' && currentCandle.low <= adr.adr2l && currentCandle.close > currentCandle.open) {
-            return {
-                type: 'BUY',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `Mean Reversion: Rejection at ADR2 Low.`,
-                strength: 0.8,
-                timestamp: Date.now(),
-                targetPoints: Math.abs(adr.adr1l - currentCandle.close),
-                slPoints: Math.abs(currentCandle.close - adr.adr2l) + 15
-            };
-        }
-
-        return { type: 'NONE', price: 0, symbol: '', reason: 'Waiting for ADR interaction', strength: 0, timestamp: Date.now() };
+        return {
+            type: decision.type === 'LONG' ? 'BUY' : 'SELL',
+            price: currentCandle.close,
+            symbol: indexType,
+            reason: decision.reasoning || `AI Alpha Pattern (confidence ${(decision.confidence * 100).toFixed(1)}%)`,
+            strength: decision.confidence,
+            timestamp: Date.now(),
+            slPoints: decision.slPoints,
+            targetPoints: decision.tpPoints,
+            snapshot: snaps[snaps.length - 1] // Pass latest snapshot for training feedback
+        };
     }
 
     /**

@@ -129,6 +129,32 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
                 });
         };
 
+        // ── EMA Indicators ───────────────────────────────────────────────────
+        const emaG = chartArea.append('g').attr('class', 'ema-lines');
+        const drawEMA = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
+            const emaData = [
+                { key: 'ema20', color: '#3b82f6', width: 1.5, dash: '3,2' }, // Blue
+                { key: 'ema50', color: '#8b5cf6', width: 1.5, dash: '0' }    // Violet
+            ];
+
+            emaG.selectAll('.ema-line')
+                .data(emaData)
+                .join('path')
+                .attr('class', 'ema-line')
+                .attr('fill', 'none')
+                .attr('stroke', d => d.color)
+                .attr('stroke-width', d => d.width)
+                .attr('stroke-dasharray', d => d.dash)
+                .attr('opacity', 0.6)
+                .attr('d', d => {
+                    const lineGen = d3.line<any>()
+                        .defined((item: any) => item[d.key] > 0)
+                        .x((_, i) => sx(i))
+                        .y((item: any) => sy(item[d.key]));
+                    return lineGen(data) as string;
+                });
+        };
+
         // ── Candles ───────────────────────────────────────────────────────────
         const candleG = chartArea.append('g').attr('class', 'candles');
         const drawCandles = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
@@ -241,13 +267,35 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
                 .attr('fill', 'none');
         };
 
+        const drawDaySeparators = (sx: d3.ScaleLinear<number, number>) => {
+            const separators: number[] = [];
+            for (let i = 1; i < data.length; i++) {
+                const d1 = new Date(data[i - 1].time * 1000 + 330 * 60000).toISOString().split('T')[0];
+                const d2 = new Date(data[i].time * 1000 + 330 * 60000).toISOString().split('T')[0];
+                if (d1 !== d2) separators.push(i);
+            }
+
+            gridG.selectAll('.day-separator')
+                .data(separators)
+                .join('line')
+                .attr('class', 'day-separator')
+                .attr('x1', d => sx(d) - (sx(1) - sx(0)) / 2)
+                .attr('x2', d => sx(d) - (sx(1) - sx(0)) / 2)
+                .attr('y1', 0)
+                .attr('y2', heightChart)
+                .attr('stroke', 'rgba(255,255,255,0.15)')
+                .attr('stroke-width', 2)
+                .attr('stroke-dasharray', '5,5');
+        };
+
         // ── Axes ──────────────────────────────────────────────────────────────
         const xAxisG = mainG.append('g').attr('transform', `translate(0,${heightChart})`);
         const yAxisG = mainG.append('g').attr('transform', `translate(${widthChart},0)`);
 
         const drawAxes = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
             const timeFormat = d3.timeFormat('%H:%M');
-            const dateTimeFormat = d3.timeFormat('%d/%m %H:%M');
+            const dayFormat = d3.timeFormat('%d %b');
+
             const [start, end] = sx.domain();
             const range = end - start;
             const step = Math.max(1, Math.ceil(range / 6));
@@ -255,15 +303,25 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
             for (let i = Math.max(0, Math.floor(start)); i <= Math.min(data.length - 1, end); i += step) {
                 if (data[i]) tickIndices.push(i);
             }
+
             xAxisG.call(d3.axisBottom(sx)
                 .tickValues(tickIndices)
-                .tickFormat(i => {
-                    const d = data[i as number];
-                    if (!d) return '';
-                    const date = new Date(d.time * 1000);
-                    return range > 500 ? dateTimeFormat(date) : timeFormat(date);
+                .tickFormat(d => {
+                    const i = Number(d);
+                    const item = data[i];
+                    if (!item) return '';
+                    const date = new Date(item.time * 1000 + 330 * 60000);
+                    // Show date if it's the first bar of the day or if we have > 1 day
+                    const isFirstOfRecord = i === 0;
+                    const prevItem = data[i - 1];
+                    const isFirstOfDay = i > 0 && prevItem &&
+                        new Date(prevItem.time * 1000 + 330 * 60000).toISOString().split('T')[0] !== date.toISOString().split('T')[0];
+
+                    if (isFirstOfRecord || isFirstOfDay) return dayFormat(date) + " " + timeFormat(date);
+                    return timeFormat(date);
                 }) as any)
                 .select('.domain').remove();
+
             xAxisG.selectAll('text').attr('fill', '#64748b').style('font-size', '10px').style('font-weight', '600');
             xAxisG.selectAll('line').attr('stroke', 'rgba(255,255,255,0.05)');
             yAxisG.call(d3.axisRight(sy).tickSize(0).tickPadding(8) as any).select('.domain').remove();
@@ -276,15 +334,19 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
 
         const redrawAll = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
             drawGrid(sx, sy);
-            drawADR(sx, sy);
+            drawDaySeparators(sx);
+            // drawADR(sx, sy); // User requested disable
+            // drawEMA(sx, sy); // User requested disable
             drawCandles(sx, sy);
             drawTrades(sx, sy);
             drawAxes(sx, sy);
         };
 
-        const zoom = d3.zoom<SVGSVGElement, unknown>()
+        const zoomX = d3.zoom<SVGSVGElement, unknown>()
             .scaleExtent([0.1, 100])
             .on('zoom', (e) => {
+                // If it's a wheel event and no modifier key, zoom X
+                // If it's a drag event on the main area, pan X (and Y if not auto)
                 transformRef.current = e.transform;
                 currentScaleX = e.transform.rescaleX(x);
 
@@ -297,16 +359,62 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
                         const pad = (maxP - minP) * 0.15;
                         currentScaleY.domain([minP - pad, maxP + pad]);
                     }
+                } else {
+                    // If not auto-priced, we might want to rescale Y if we had a Y-transform
+                    // But for now let's keep it simple
                 }
 
                 redrawAll(currentScaleX, currentScaleY);
             });
 
-        zoomBehaviorRef.current = zoom;
-        svg.call(zoom as any);
+        // Separate Y-axis zoom/drag logic
+        const yAxisArea = mainG.append('rect')
+            .attr('class', 'y-axis-area')
+            .attr('x', widthChart)
+            .attr('y', 0)
+            .attr('width', margin.right)
+            .attr('height', heightChart)
+            .attr('fill', 'transparent')
+            .style('cursor', 'ns-resize');
+
+        const zoomY = d3.drag<SVGRectElement, unknown>()
+            .on('drag', (e) => {
+                isAutoPricedRef.current = false;
+                const factor = Math.pow(1.1, -e.dy / 10);
+                const [min, max] = currentScaleY.domain();
+                const center = currentScaleY.invert(e.y);
+                const newDomain = [
+                    center - (center - min) * factor,
+                    center + (max - center) * factor
+                ];
+                currentScaleY.domain(newDomain);
+                redrawAll(currentScaleX, currentScaleY);
+            });
+
+        yAxisArea.call(zoomY as any);
+
+        // Add support for Ctrl + Wheel to zoom Y
+        svg.on('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                isAutoPricedRef.current = false;
+                const factor = e.deltaY > 0 ? 1.1 : 0.9;
+                const [min, max] = currentScaleY.domain();
+                const mousePrice = currentScaleY.invert(d3.pointer(e)[1] - margin.top);
+                const newDomain = [
+                    mousePrice - (mousePrice - min) * factor,
+                    mousePrice + (max - mousePrice) * factor
+                ];
+                currentScaleY.domain(newDomain);
+                redrawAll(currentScaleX, currentScaleY);
+            }
+        }, { passive: false });
+
+        zoomBehaviorRef.current = zoomX;
+        svg.call(zoomX as any);
 
         if (transformRef.current !== d3.zoomIdentity) {
-            svg.call(zoom.transform, transformRef.current);
+            svg.call(zoomX.transform, transformRef.current);
         } else {
             redrawAll(x, y);
         }

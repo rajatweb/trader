@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAlgoStore } from '@/lib/store/algoStore';
 import { useTradingStore } from '@/lib/store/tradingStore';
 import { useAlgoRunner } from '@/lib/algo/runner';
-import { calculateADRx3 } from '@/lib/algo/adrIndicator';
+import { calculateADRx2 } from '@/lib/algo/adrIndicator';
 import AlgoRealtimeChart from './components/AlgoRealtimeChart';
 import { useMarketFeed } from '@/lib/store/useMarketFeed';
 
@@ -91,7 +91,7 @@ export default function AlgoDashboard() {
                 finalData.sort((a: any, b: any) => a.time - b.time);
 
                 // Run ADR calculation over the full 30-day context dataset
-                const dataWithAdr = calculateADRx3(finalData);
+                const dataWithAdr = calculateADRx2(finalData);
 
                 if (forceInit) {
                     setChartData(dataWithAdr);
@@ -190,12 +190,19 @@ export default function AlgoDashboard() {
             newData[lastIdx] = updatedCandle;
             return newData;
         });
-    }, [indexItem?.ltp, indexItem?.ltt, indexItem?.volume, chartData]);
+    }, [indexItem?.ltp, indexItem?.ltt, indexItem?.volume]);
 
     useEffect(() => {
         if (brokerCredentials) {
             setChartData([]);
             fetchIntradayData(true);
+
+            // Sync config with selected index
+            useAlgoStore.getState().updateConfig({
+                symbols: [currentInst.symbol],
+                lotSize: { [currentInst.symbol]: currentInst.symbol === 'BANKNIFTY' ? 30 : 50 }
+            });
+
             const interval = setInterval(() => fetchIntradayData(false), 60000);
             return () => clearInterval(interval);
         }

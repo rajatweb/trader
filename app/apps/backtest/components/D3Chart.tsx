@@ -145,7 +145,11 @@ const D3Chart: React.FC<D3ChartProps> = ({ data, height }) => {
 
             xAxisG.call(d3.axisBottom(sx)
                 .tickValues(tickIndices.filter(i => data[i]))
-                .tickFormat(i => timeFormat(new Date(data[i as number].time * 1000))) as any)
+                .tickFormat(val => {
+                    const i = Number(val);
+                    const item = data[i];
+                    return item ? timeFormat(new Date(item.time * 1000)) : '';
+                }) as any)
                 .select('.domain').remove();
 
             xAxisG.selectAll('text').attr('fill', '#94a3b8').style('font-size', '10px');
