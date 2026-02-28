@@ -1,296 +1,257 @@
-
-import { AlgoSignal, TradingZone } from './types';
+import { AlgoSignal, TradingPlan } from './types';
+import { CandleWithAdr } from './adrIndicator';
 
 /**
- * Algo Strategy Helper
- * Focuses on breakout/breakdown detection and fakeout identification.
+ * ADR Sniper Strategy
+ * Intelligent Options Buying Strategy based on Average Daily Range bands
  */
 export class TradingStrategy {
+
     /**
-     * Identifies trading zones and analyzes market sentiment over 10 days.
-     * Determines PDH, PDL, PDC and calculates "Retail SL Clusters".
+     * Pre-Market Analysis generator.
+     * Takes the last 30 days of data and the freshly generated ADR zones for today
+     * to formulate a statistical trading plan.
      */
-    static identifyZones(candles: any[]): (TradingZone & { metadata?: any })[] {
-        if (!candles || candles.length === 0) return [];
+    static runPreMarketAnalysis(candles: CandleWithAdr[]): TradingPlan | null {
+        if (!candles || candles.length < 10) return null;
 
-        // Group by day for multi-day analysis
-        const dayMap = new Map<string, any[]>();
-        candles.forEach(c => {
-            let ts = c.time || c.start_Time || c.start_time || c.timestamp;
-            if (!ts) return;
+        const latestCandle = candles[candles.length - 1];
+        const adr = latestCandle.adr;
+        if (!adr) return null;
 
-            // Normalize: If TS is in ms (usually > 20,000,000,000)
-            if (ts > 20000000000) ts = ts / 1000;
+        // Get yesterday's close
+        let yesterdayClose = 0;
+        let yesterdayOpen = 0;
 
-            try {
-                const date = new Date(ts * 1000).toISOString().split('T')[0];
-                if (!dayMap.has(date)) dayMap.set(date, []);
-                dayMap.get(date)?.push({ ...c, time: ts, start_Time: ts });
-            } catch (e) {
-                console.warn("Invalid timestamp encountered:", ts);
+        // Find the last candle of the previous day
+        const todayDate = new Date(latestCandle.time * 1000).toISOString().split('T')[0];
+
+        for (let i = candles.length - 1; i >= 0; i--) {
+            const cDate = new Date(candles[i].time * 1000).toISOString().split('T')[0];
+            if (cDate !== todayDate) {
+                yesterdayClose = candles[i].close;
+                // find yesterday's open
+                for (let j = i; j >= 0; j--) {
+                    const cDate2 = new Date(candles[j].time * 1000).toISOString().split('T')[0];
+                    if (cDate2 !== cDate) {
+                        break;
+                    }
+                    yesterdayOpen = candles[j].open;
+                }
+                break;
             }
-        });
+        }
 
-        const dates = Array.from(dayMap.keys()).sort();
-        if (dates.length < 1) return [];
+        if (yesterdayClose === 0) return null;
 
-        const today = new Date().toISOString().split('T')[0];
-        const isTodayStarted = dates[dates.length - 1] === today;
+        // Trend Assessment
+        let trend: TradingPlan['trend'] = 'NEUTRAL';
+        let maxTradesAllowed = 2; // Choppy days = low trades
+        const allowedDirections: ('BUY' | 'SELL')[] = ['BUY', 'SELL'];
+        let reasoning = '';
 
-        // 1. Identify Reference Periods
-        // If today is in data, history is everything before today.
-        // If today is NOT in data yet (pre-market), history is everything including the last available day.
-        const activeSessionDate = isTodayStarted ? dates[dates.length - 1] : null;
-        const prevDate = isTodayStarted ?
-            (dates.length > 1 ? dates[dates.length - 2] : null) :
-            dates[dates.length - 1];
+        // If yesterday closed above ADR1 High, it's super bullish momentum
+        if (yesterdayClose > adr.adr1h) {
+            trend = 'SUPER_BULLISH';
+            maxTradesAllowed = 5;
+            allowedDirections.splice(0, allowedDirections.length, 'BUY'); // Only taking CE trades
+            reasoning = `Yesterday closed extremely strong above ADR1 High (${adr.adr1h.toFixed(0)}), indicating huge momentum. Aggressive Long bias.`;
+        } else if (yesterdayClose > adr.open) {
+            trend = 'BULLISH';
+            maxTradesAllowed = 3;
+            reasoning = `Yesterday closed positive above open. Moderate Long bias. Reversion trades allowed.`;
+        } else if (yesterdayClose < adr.adr1l) {
+            trend = 'SUPER_BEARISH';
+            maxTradesAllowed = 5;
+            allowedDirections.splice(0, allowedDirections.length, 'SELL'); // Only taking PE trades
+            reasoning = `Yesterday closed extremely weak below ADR1 Low (${adr.adr1l.toFixed(0)}), indicating huge downside momentum. Aggressive Short bias.`;
+        } else if (yesterdayClose < adr.open) {
+            trend = 'BEARISH';
+            maxTradesAllowed = 3;
+            reasoning = `Yesterday closed negative below open. Moderate Short bias. Reversion trades allowed.`;
+        } else {
+            trend = 'NEUTRAL';
+            maxTradesAllowed = 2;
+            reasoning = `Yesterday closed around the open. Market is consolidating. Expecting chop, restricted to high-confidence mean reversion trades only.`;
+        }
 
-        // Sentiment analysis should use all available history (up to last 10 days)
-        const historyDates = isTodayStarted ? dates.slice(0, -1) : dates;
-        const lastNDates = historyDates.slice(-10);
-        let bullishDays = 0;
-        let bearishDays = 0;
-        let totalVolatility = 0;
-
-        let weeklyHigh = 0;
-        let weeklyLow = Infinity;
-
-        lastNDates.forEach((date: string) => {
-            const dayCandles = dayMap.get(date)!;
-            const open = dayCandles[0].open;
-            const close = dayCandles[dayCandles.length - 1].close;
-            const high = Math.max(...dayCandles.map(c => c.high));
-            const low = Math.min(...dayCandles.map(c => c.low));
-
-            if (high > weeklyHigh) weeklyHigh = high;
-            if (low < weeklyLow) weeklyLow = low;
-
-            if (close > open) bullishDays++;
-            else bearishDays++;
-            totalVolatility += (high - low);
-        });
-
-        const avgDailyRange = totalVolatility / Math.max(1, lastNDates.length);
-        const sentiment = bullishDays > bearishDays ? 'BULLISH' : 'BEARISH';
-        const sentimentStrength = Math.abs(bullishDays - bearishDays) / Math.max(1, lastNDates.length);
-
-        if (!prevDate) return [];
-        const prevDayCandles = dayMap.get(prevDate)!;
-        const pdh = Math.max(...prevDayCandles.map(c => c.high));
-        const pdl = Math.min(...prevDayCandles.map(c => c.low));
-        const pdc = prevDayCandles[prevDayCandles.length - 1].close;
-        const pdo = prevDayCandles[0].open;
-
-        // Retail Bias for Today
-        const closePosition = (pdc - pdl) / (pdh - pdl);
-        const retailBias = closePosition > 0.7 ? 'BULLISH' : (closePosition < 0.3 ? 'BEARISH' : 'NEUTRAL');
-
-        const zones: (TradingZone & { metadata?: any })[] = [
-            { price: pdh, type: 'RESISTANCE', strength: 1.0, description: 'PDH', metadata: { retailBias, sentiment, weeklyHigh, weeklyLow } },
-            { price: pdl, type: 'SUPPORT', strength: 1.0, description: 'PDL', metadata: { retailBias, sentiment, weeklyHigh, weeklyLow } },
-            { price: pdc, type: 'PIVOT', strength: 0.6, description: 'PDC' },
-            { price: weeklyHigh, type: 'RESISTANCE', strength: 1.2, description: 'Weekly High' },
-            { price: weeklyLow, type: 'SUPPORT', strength: 1.2, description: 'Weekly Low' }
-        ];
-
-        // 3. Identify Retail SL Cluster Zones (0.1% beyond extremes)
-        const slBuffer = pdh * 0.0005;
-        zones.push({ price: pdh + slBuffer, type: 'RESISTANCE', strength: 0.5, description: 'Retail SL Hunt (Longs)' });
-        zones.push({ price: pdl - slBuffer, type: 'SUPPORT', strength: 0.5, description: 'Retail SL Hunt (Shorts)' });
-
-        return zones;
+        return {
+            trend,
+            maxTradesAllowed,
+            allowedDirections,
+            reasoning,
+            generatedAt: Date.now()
+        };
     }
 
     /**
-     * Intelligent SL Hunting Logic.
-     * Analysis focus: 
-     * - If Retail is BULLISH (from PDC/Sentiment), Smart Money will HUNT below PDL.
-     * - If Retail is BEARISH, Smart Money will HUNT above PDH.
+     * Checks the 1-minute candle sequence against ADR lines 
+     * and the active trading plan to generate exact signals.
      */
-    static checkSignal(
-        currentCandle: any,
-        prevCandles: any[],
-        zones: any[]
+    static checkAdrSignal(
+        currentCandle: CandleWithAdr,
+        prevCandles: CandleWithAdr[],
+        plan: TradingPlan | null
     ): AlgoSignal {
+        if (!plan || !currentCandle.adr) {
+            return { type: 'NONE', price: 0, symbol: '', reason: 'No plan or ADR data', strength: 0, timestamp: Date.now() };
+        }
+
+        const adr = currentCandle.adr;
         const lastCandle = prevCandles[prevCandles.length - 1];
         if (!lastCandle) return { type: 'NONE', price: 0, symbol: '', reason: 'No history', strength: 0, timestamp: Date.now() };
 
-        const pdhZone = zones.find(z => z.description.includes('PDH'));
-        const pdlZone = zones.find(z => z.description.includes('PDL'));
-        const whZone = zones.find(z => z.description.includes('Weekly High'));
-        const wlZone = zones.find(z => z.description.includes('Weekly Low'));
-        const meta = pdhZone?.metadata || {};
-
-        if (!pdhZone || !pdlZone) return { type: 'NONE', price: 0, symbol: '', reason: 'Anchors missing', strength: 0, timestamp: Date.now() };
-
-        // 1. MEGA REVERSAL (Weekly Low Sweep)
-        if (wlZone && currentCandle.low <= wlZone.price && currentCandle.close > wlZone.price) {
-            return {
-                type: 'BUY',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `MEGA REVERSAL: Weekly Low Liquidity Sweep. High Strength.`,
-                strength: 0.98,
-                timestamp: Date.now(),
-                target: 1.80, // 80% Options Premium Target (High Conviction)
-                sl: 0.70      // 30% SL (Room to breathe on reversal)
-            };
+        // Signal A: Trend Following Breakout of Inner Bands
+        // MUST align with the TradingPlan's overall trend
+        if (plan.allowedDirections.includes('BUY') && currentCandle.close > adr.adr1h && lastCandle.close <= adr.adr1h) {
+            if ((currentCandle.volume || 0) > (lastCandle.volume || 0)) { // Volume confirmation
+                return {
+                    type: 'BUY',
+                    price: currentCandle.close,
+                    symbol: 'INDEX',
+                    reason: `Trend Breakout: Crossed ADR1 High with volume confirmation. Trend is ${plan.trend}`,
+                    strength: 0.85,
+                    timestamp: Date.now(),
+                    targetPoints: Math.abs(adr.adr2h - currentCandle.close), // Target ADR2
+                    slPoints: Math.abs(currentCandle.close - currentCandle.low) + 10 // SL below breakout candle
+                };
+            }
         }
 
-        // 2. BEAR TRAP (PDL Scan)
-        const recentLow = Math.min(...prevCandles.slice(-10).map(c => c.low));
-        if (recentLow < pdlZone.price && currentCandle.close > pdlZone.price && lastCandle.close <= pdlZone.price) {
-            const strength = meta.sentiment === 'BULLISH' ? 0.95 : 0.8;
-            return {
-                type: 'BUY',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `Trap @ PDL. Trend: ${meta.sentiment}`,
-                strength,
-                timestamp: Date.now(),
-                target: 1.60, // 60% PNL Target
-                sl: 0.80      // 20% SL 
-            };
+        if (plan.allowedDirections.includes('SELL') && currentCandle.close < adr.adr1l && lastCandle.close >= adr.adr1l) {
+            if ((currentCandle.volume || 0) > (lastCandle.volume || 0)) {
+                return {
+                    type: 'SELL',
+                    price: currentCandle.close,
+                    symbol: 'INDEX',
+                    reason: `Trend Breakdown: Crossed ADR1 Low with volume confirmation. Trend is ${plan.trend}`,
+                    strength: 0.85,
+                    timestamp: Date.now(),
+                    targetPoints: Math.abs(currentCandle.close - adr.adr2l), // Target ADR2
+                    slPoints: Math.abs(currentCandle.high - currentCandle.close) + 10
+                };
+            }
         }
 
-        // 3. BULL TRAP (PDH Scan)
-        const recentHigh = Math.max(...prevCandles.slice(-10).map(c => c.high));
-        if (recentHigh > pdhZone.price && currentCandle.close < pdhZone.price && lastCandle.close >= pdhZone.price) {
-            const strength = meta.sentiment === 'BEARISH' ? 0.95 : 0.8;
+        // Signal B: Extreme Mean Reversion at Outer Bands (Allowed in almost all plans)
+        // ADR3 touches are pure elastic rebounds.
+        if (currentCandle.high >= adr.adr3h && currentCandle.close < currentCandle.open) { // Touching ADR3 High and reverting red
             return {
                 type: 'SELL',
                 price: currentCandle.close,
                 symbol: 'INDEX',
-                reason: `Trap @ PDH. Trend: ${meta.sentiment}`,
-                strength,
+                reason: `Extreme Mean Reversion: Rejection at ADR3 High. High probability fade.`,
+                strength: 0.95,
                 timestamp: Date.now(),
-                target: 1.60, // 60% PNL Target
-                sl: 0.80      // 20% SL 
+                targetPoints: Math.abs(currentCandle.close - adr.adr1h), // Target back inside to ADR1
+                slPoints: Math.abs(adr.adr3h - currentCandle.close) + 15  // Tight SL just above ADR3
             };
         }
 
-        // 4. MEGA SHORT (Weekly High Sweep)
-        if (whZone && currentCandle.high >= whZone.price && currentCandle.close < whZone.price) {
-            return {
-                type: 'SELL',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `MEGA SHORT: Weekly High Liquidity Sweep.`,
-                strength: 0.98,
-                timestamp: Date.now(),
-                target: 1.80, // 80% PNL Target
-                sl: 0.70      // 30% SL
-            };
-        }
-
-        // 5. SENTIMENT-BASED SCALP (Fast Execution)
-        // Aggressively find all possible trades in the direction of sentiment
-        const sentiment = meta.sentiment || 'NEUTRAL';
-        const currentMove = currentCandle.close - currentCandle.open;
-
-        // If BULLISH, take ANY 3-point upward momentum from open
-        if (sentiment === 'BULLISH' && currentMove > 3) {
+        if (currentCandle.low <= adr.adr3l && currentCandle.close > currentCandle.open) { // Touching ADR3 Low and reverting green
             return {
                 type: 'BUY',
                 price: currentCandle.close,
                 symbol: 'INDEX',
-                reason: `SENTIMENT BULLISH: 3pt upward momentum`,
-                strength: 0.90,
+                reason: `Extreme Mean Reversion: Rejection at ADR3 Low. High probability bounce.`,
+                strength: 0.95,
                 timestamp: Date.now(),
-                target: 1.30, // 30% Target (Quick Scalp)
-                sl: 0.85      // 15% Tight SL
+                targetPoints: Math.abs(adr.adr1l - currentCandle.close),
+                slPoints: Math.abs(currentCandle.close - adr.adr3l) + 15
             };
         }
 
-        // If BEARISH, take ANY 3-point downward momentum from open
-        if (sentiment === 'BEARISH' && currentMove < -3) {
+        // ADR2 Mean Reversion (Needs to be cautious if trend is "SUPER")
+        if (plan.trend !== 'SUPER_BULLISH' && currentCandle.high >= adr.adr2h && currentCandle.close < currentCandle.open) {
             return {
                 type: 'SELL',
                 price: currentCandle.close,
                 symbol: 'INDEX',
-                reason: `SENTIMENT BEARISH: 3pt downward momentum`,
-                strength: 0.90,
+                reason: `Mean Reversion: Rejection at ADR2 High.`,
+                strength: 0.8,
                 timestamp: Date.now(),
-                target: 1.30, // 30% Target (Quick Scalp)
-                sl: 0.85      // 15% Tight SL
+                targetPoints: Math.abs(currentCandle.close - adr.adr1h),
+                slPoints: Math.abs(adr.adr2h - currentCandle.close) + 15
             };
         }
 
-        // Multi-directional fast scalp if no clear sentiment but steep momentum (5 pts)
-        if (currentCandle.close > lastCandle.high + 5) {
+        if (plan.trend !== 'SUPER_BEARISH' && currentCandle.low <= adr.adr2l && currentCandle.close > currentCandle.open) {
             return {
                 type: 'BUY',
                 price: currentCandle.close,
                 symbol: 'INDEX',
-                reason: `MOMENTUM SCALP: Strong Breakout.`,
-                strength: 0.85,
+                reason: `Mean Reversion: Rejection at ADR2 Low.`,
+                strength: 0.8,
                 timestamp: Date.now(),
-                target: 1.20, // 20% Micro Scalp
-                sl: 0.85      // 15% Sl
+                targetPoints: Math.abs(adr.adr1l - currentCandle.close),
+                slPoints: Math.abs(currentCandle.close - adr.adr2l) + 15
             };
         }
 
-        if (currentCandle.close < lastCandle.low - 5) {
-            return {
-                type: 'SELL',
-                price: currentCandle.close,
-                symbol: 'INDEX',
-                reason: `MOMENTUM SCALP: Strong Breakdown.`,
-                strength: 0.85,
-                timestamp: Date.now(),
-                target: 1.20, // 20% Micro Scalp
-                sl: 0.85      // 15% Sl
-            };
-        }
-
-        return { type: 'NONE', price: 0, symbol: '', reason: 'Waiting for Sentiment Pull or Breakout', strength: 0, timestamp: Date.now() };
+        return { type: 'NONE', price: 0, symbol: '', reason: 'Waiting for ADR interaction', strength: 0, timestamp: Date.now() };
     }
 
     /**
-     * Quantity calculation with smart scaling based on Daily Progress
+     * Quantity calculation
      */
     static calculateQuantity(capital: number, price: number, lotSize: number = 1): number {
-        // Allocation: 60% of capital for SL Hunt trades as they are high probability
-        const allocation = capital * 0.6;
+        // Assume maximum risk is hitting a stop loss of approx 30 points (value depends on option delta, but assume roughly 30 * qty)
+        // Conservative allocation of capital
+        const allocation = capital * 0.5;
         const rawQty = allocation / price;
         const lots = Math.floor(rawQty / lotSize);
         return Math.max(1, lots) * lotSize;
     }
 
-    static getATMStrike(spot: number, symbol: string): number {
-        const step = symbol.includes('BANK') ? 100 : 50;
-        return Math.round(spot / step) * step;
-    }
-
     /**
-     * Finds the contract from Dhan's Option Chain response (Strike-indexed object)
+     * Get In-The-Money (ITM) Strike that hasn't been traded yet today.
+     * @param spotPrice The current index price
+     * @param indexName ex: 'NIFTY', 'BANKNIFTY'
+     * @param isCall True for CE, false for PE
+     * @param tradeHistory List of previous trades to avoid repeating strikes
+     * @param activePositions List of currently open positions
+     * @param depth How many strikes ITM (1 = first ITM)
      */
-    static findContract(chainData: any, targetStrike: number, type: 'CALL' | 'PUT') {
-        if (!chainData || !chainData.oc) return null;
+    static getUntradedITMStrike(
+        spotPrice: number,
+        indexName: string,
+        isCall: boolean,
+        tradeHistory: any[],
+        activePositions: any[],
+        depth: number = 1
+    ): number | null {
+        const step = indexName.includes('BANK') ? 100 : (indexName.includes('FIN') ? 50 : 50);
 
-        const strikes = Object.keys(chainData.oc);
-        // Match strike with tolerance for float rounding (e.g., "22500.000000" matches 22500)
-        const matchKey = strikes.find(s => Math.round(parseFloat(s)) === targetStrike);
+        // Base ATM strike
+        const atm = Math.round(spotPrice / step) * step;
 
-        if (!matchKey) return null;
+        // Gather all currently traded/active symbols to prevent reuse
+        const usedSymbols = [
+            ...tradeHistory.map(t => t.symbol),
+            ...activePositions.map(p => p.symbol) // Don't buy the same strike if we are already holding it
+        ];
 
-        const strikeInfo = chainData.oc[matchKey];
-        const contract = type === 'CALL' ? strikeInfo.ce : strikeInfo.pe;
+        // Max attempts to find an untraded strike (prevent infinite loops)
+        const maxAttempts = 5;
 
-        if (!contract) return null;
+        // For CE, ITM means strike is LOWER than spot. 
+        // For PE, ITM means strike is HIGHER than spot.
+        let currentDepth = depth;
 
-        return {
-            ...contract,
-            securityId: contract.security_id, // Safely remap Dhan's snake_case to the app's camelCase standard
-            strike_price: targetStrike,
-            oc_type: type
-        };
-    }
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const strikeOffset = currentDepth * step;
+            const targetStrike = isCall ? (atm - strikeOffset) : (atm + strikeOffset);
 
-    /**
-     * Goal Management
-     */
-    static shouldStopForDay(currentPnl: number, targetPnl: number = 10000): boolean {
-        return currentPnl >= targetPnl;
+            const optSymbol = `${indexName} ${targetStrike} ${isCall ? 'CE' : 'PE'}`;
+
+            if (!usedSymbols.includes(optSymbol)) {
+                return targetStrike;
+            }
+
+            // If used, go one step deeper ITM
+            currentDepth++;
+        }
+
+        return null; // All reasonable strikes used or depth too extreme
     }
 }

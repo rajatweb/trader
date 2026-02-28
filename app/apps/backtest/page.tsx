@@ -79,6 +79,7 @@ export default function BacktestPage() {
     const [candles, setCandles] = useState<any[]>([]);
     const [result, setResult] = useState<BacktestResult | null>(null);
     const [activeMonth, setActiveMonth] = useState<string | null>(null);
+    const [activeDay, setActiveDay] = useState<string | null>(null);
     const [expandTrades, setExpandTrades] = useState(false);
 
     // Convert result signals to AlgoRealtimeChart-compatible signal format
@@ -190,9 +191,13 @@ export default function BacktestPage() {
         }
     }, [brokerCredentials, fromDate, toDate]);
 
-    // ── Trades for active month ────────────────────────────────────────────
+    // ── Trades for active month & day ────────────────────────────────────────────
     const activeTrades: BacktestTrade[] = result
-        ? (activeMonth ? result.trades.filter(t => t.date.startsWith(activeMonth)) : result.trades)
+        ? result.trades.filter(t => {
+            if (activeDay) return t.date === activeDay;
+            if (activeMonth) return t.date.startsWith(activeMonth);
+            return true;
+        })
         : [];
 
     const activeMonthResult = result?.monthResults.find(m => m.month === activeMonth);
@@ -349,19 +354,41 @@ export default function BacktestPage() {
                         <div className="flex flex-col" style={{ height: 520 }}>
                             <div className="flex items-center justify-between mb-3 flex-shrink-0">
                                 <div className="flex items-center gap-3">
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">BANKNIFTY · 1 min · {candles.length.toLocaleString()} candles</span>
-                                    <span className="text-[10px] font-bold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full">
-                                        {result.trades.length} signals marked
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                        BANKNIFTY · 1 min · {activeDay ? activeDay.slice(5) : (activeMonth ? activeMonth : 'ALL')}
                                     </span>
+                                    <span className="text-[10px] font-bold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full">
+                                        {activeTrades.length} signals marked
+                                    </span>
+                                    {activeDay && (
+                                        <button
+                                            onClick={() => setActiveDay(null)}
+                                            className="text-[10px] ml-2 font-bold px-2 py-0.5 rounded-full border border-rose-500/50 text-rose-400 hover:bg-rose-500/10"
+                                        >
+                                            Reset Filter
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex-1 min-h-0">
-                                {/* <AlgoRealtimeChart
-                                    data={candles}
-                                    signals={""}
-                                    zones={[]}
-                                    symbol="BANKNIFTY"
-                                /> */}
+                                {activeDay && (
+                                    <AlgoRealtimeChart
+                                        data={result.allCandles.filter((c: any) => {
+                                            const d = new Date(c.time * 1000 + 330 * 60000).toISOString().split('T')[0];
+                                            return d === activeDay;
+                                        })}
+                                        symbol="BANKNIFTY"
+                                        trades={activeTrades}
+                                    />
+                                )}
+                                {!activeDay && (
+                                    <div className="h-full flex items-center justify-center border border-white/5 rounded-2xl bg-white/[0.02]">
+                                        <div className="text-center">
+                                            <BarChart3 size={32} className="mx-auto text-slate-600 mb-3" />
+                                            <div className="text-sm font-bold text-slate-400">Select a specific Day to view its chart</div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -439,6 +466,32 @@ export default function BacktestPage() {
                                 ))}
                             </div>
                         </div>
+
+                        {/* Daily grid (only visible if activeMonth is chosen) */}
+                        {activeMonth && (
+                            <div>
+                                <div className="flex items-center gap-3 mb-4 mt-8">
+                                    <div className="h-px flex-1 bg-white/5" />
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Daily Breakdown — {activeMonthResult?.label}</span>
+                                    <div className="h-px flex-1 bg-white/5" />
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-3">
+                                    {result.dayResults.filter(d => d.date.startsWith(activeMonth)).map(d => (
+                                        <button
+                                            key={d.date}
+                                            onClick={() => setActiveDay(activeDay === d.date ? null : d.date)}
+                                            className={`rounded-2xl border p-3 text-center transition-all hover:bg-white/5 ${activeDay === d.date ? 'border-violet-500/50 bg-violet-500/10' : 'border-white/5 bg-white/[0.02]'}`}
+                                        >
+                                            <div className="text-[10px] font-bold text-slate-400 mb-1">{d.date.slice(5)}</div>
+                                            <div className={`text-base font-black font-mono tracking-tighter ${d.dayNetPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {d.dayNetPnl > 0 ? '+' : ''}{fmt(d.dayNetPnl)}
+                                            </div>
+                                            <div className="text-[9px] text-slate-600 mt-1">{d.tradesTaken} trades</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Trade Log */}
                         <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-hidden">

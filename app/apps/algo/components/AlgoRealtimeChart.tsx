@@ -23,9 +23,10 @@ interface AlgoRealtimeChartProps {
     data: OHLCV[];
     height?: number;
     symbol: string;
+    trades?: any[];
 }
 
-const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, symbol }) => {
+const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, symbol, trades }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const svgRef = useRef<SVGSVGElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -164,6 +165,82 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
             selection.exit().remove();
         };
 
+        // ── Trades ───────────────────────────────────────────────────────────
+        const tradeG = chartArea.append('g').attr('class', 'trades');
+        const drawTrades = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
+            if (!trades || trades.length === 0) return;
+
+            const markers: any[] = [];
+
+            trades.forEach(t => {
+                const entryIdx = data.findIndex(d => d.time === t.entryTimestamp);
+                if (entryIdx !== -1) {
+                    markers.push({
+                        type: 'entry',
+                        idx: entryIdx,
+                        price: data[entryIdx].low, // Point below candle
+                        priceHigh: data[entryIdx].high, // Point above candle
+                        isLong: t.type === 'LONG',
+                        tradeId: t.id
+                    });
+                }
+
+                const exitIdx = data.findIndex(d => d.time === t.exitTimestamp);
+                if (exitIdx !== -1) {
+                    markers.push({
+                        type: 'exit',
+                        idx: exitIdx,
+                        price: data[exitIdx].close,
+                        isLong: t.type === 'LONG',
+                        reason: t.exitReason,
+                        tradeId: t.id
+                    });
+                }
+            });
+
+            // Entry Markers (Triangles)
+            tradeG.selectAll('.entry-marker')
+                .data(markers.filter(m => m.type === 'entry'), (d: any) => d.tradeId + '-entry')
+                .join('path')
+                .attr('class', 'entry-marker')
+                .attr('d', d3.symbol().type(d3.symbolTriangle).size(80) as any)
+                .attr('fill', d => d.isLong ? '#10b981' : '#f43f5e') // Green triangle = Long, Red triangle = Short
+                .attr('transform', d => {
+                    const xPos = sx(d.idx);
+                    // Buy CE = Arrow pointing UP below candle. Buy PE = Arrow pointing DOWN above candle.
+                    const yPos = d.isLong ? sy(d.price) + 20 : sy(d.priceHigh) - 20;
+                    const rot = d.isLong ? 0 : 180;
+                    return `translate(${xPos}, ${yPos}) rotate(${rot})`;
+                });
+
+            // Exit Markers (Dots / Crosses)
+            const exitMarkers = markers.filter(m => m.type === 'exit');
+            const getColor = (r: string) => r === 'TARGET' ? '#10b981' : r === 'SL' ? '#f43f5e' : '#eab308';
+
+            tradeG.selectAll('.exit-marker-bg')
+                .data(exitMarkers, (d: any) => d.tradeId + '-exit-bg')
+                .join('circle')
+                .attr('class', 'exit-marker-bg')
+                .attr('cx', d => sx(d.idx))
+                .attr('cy', d => sy(d.price))
+                .attr('r', 6)
+                .attr('fill', '#0a0c10')
+                .attr('stroke', d => getColor(d.reason))
+                .attr('stroke-width', 2);
+
+            tradeG.selectAll('.exit-marker-x')
+                .data(exitMarkers, (d: any) => d.tradeId + '-exit-x')
+                .join('path')
+                .attr('class', 'exit-marker-x')
+                .attr('d', d => {
+                    const r = 3;
+                    return `M ${sx(d.idx) - r},${sy(d.price) - r} L ${sx(d.idx) + r},${sy(d.price) + r} M ${sx(d.idx) + r},${sy(d.price) - r} L ${sx(d.idx) - r},${sy(d.price) + r}`;
+                })
+                .attr('stroke', d => getColor(d.reason))
+                .attr('stroke-width', 1.5)
+                .attr('fill', 'none');
+        };
+
         // ── Axes ──────────────────────────────────────────────────────────────
         const xAxisG = mainG.append('g').attr('transform', `translate(0,${heightChart})`);
         const yAxisG = mainG.append('g').attr('transform', `translate(${widthChart},0)`);
@@ -201,6 +278,7 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, height, sym
             drawGrid(sx, sy);
             drawADR(sx, sy);
             drawCandles(sx, sy);
+            drawTrades(sx, sy);
             drawAxes(sx, sy);
         };
 

@@ -19,6 +19,14 @@ export interface TradingZone {
     description: string;
 }
 
+export interface TradingPlan {
+    trend: 'SUPER_BULLISH' | 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'SUPER_BEARISH';
+    maxTradesAllowed: number;
+    allowedDirections: ('BUY' | 'SELL')[];
+    reasoning: string;
+    generatedAt: number;
+}
+
 export interface AlgoConfig {
     initialCapital: number;
     maxRiskPerTrade: number; // Percentage

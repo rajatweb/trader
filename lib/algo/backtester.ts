@@ -1,8 +1,12 @@
 /**
  * Zenith Algo Backtesting Engine
  *
- * Runs the custom indicator simulation logic on historical candles.
+ * Runs the custom ADR Sniper Strategy simulation logic on historical candles.
  */
+
+import { calculateADRx3, CandleWithAdr } from './adrIndicator';
+import { TradingStrategy } from './strategy';
+import { TradingPlan } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -22,6 +26,8 @@ export interface BacktestTrade {
     date: string;           // YYYY-MM-DD
     entryTime: string;      // HH:MM
     exitTime: string;       // HH:MM
+    entryTimestamp: number; // For plotting
+    exitTimestamp: number;  // For plotting
     type: 'LONG' | 'SHORT';
     signal: string;         // reason
     entrySpot: number;
@@ -89,10 +95,13 @@ export interface BacktestResult {
 // Main backtester
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function runBacktest(allCandles: Candle[]): BacktestResult {
-    if (allCandles.length === 0) {
-        return emptyResult(allCandles);
+export function runBacktest(allBaseCandles: Candle[]): BacktestResult {
+    if (allBaseCandles.length === 0) {
+        return emptyResult(allBaseCandles);
     }
+
+    // 1. Calculate ADR bands for the entire dataset upfront
+    const allCandles = calculateADRx3(allBaseCandles);
 
     const allTrades: BacktestTrade[] = [];
     const dayResults: DayResult[] = [];
@@ -100,10 +109,169 @@ export function runBacktest(allCandles: Candle[]): BacktestResult {
     const signalCandles: { index: number; trade: BacktestTrade }[] = [];
 
     // ── Indicator & Backtest Logic ───────────────────────────────────────────
-    // [INDICATOR_CODE_WILL_GO_HERE]
+    let activePos: { type: 'LONG' | 'SHORT', entryPrice: number, entryIdx: number, entryTimeStr: string, signal: string, slPoints: number, targetPoints: number } | null = null;
+    let currentPlan: TradingPlan | null = null;
+    let currentDayStr = '';
+    let tradesToday = 0;
 
+    // Day tracking
+    let dayPnl = 0;
+    let dayBrokerage = 0;
+    let dayTrades: BacktestTrade[] = [];
 
-    // ── Global stats evaluation ──────────────────────────────────────────────
+    const endOfDay = (dateStr: string) => {
+        if (dayTrades.length > 0) {
+            dayResults.push({
+                date: dateStr,
+                trades: [...dayTrades],
+                dayPnl,
+                dayBrokerage,
+                dayNetPnl: dayPnl - dayBrokerage,
+                tradesTaken: dayTrades.length,
+                stopped: false
+            });
+        }
+
+        // aggregate months
+        const monthStr = dateStr.slice(0, 7);
+        let m = monthResults.find(x => x.month === monthStr);
+        if (!m) {
+            const dStr = new Date(dateStr).toLocaleString('default', { month: 'short', year: 'numeric' });
+            m = {
+                month: monthStr, label: dStr, trades: 0, wins: 0, losses: 0, winRate: 0,
+                grossPnl: 0, brokerage: 0, netPnl: 0, maxDayLoss: 0, maxDayGain: 0, profitableDays: 0, totalDays: 0
+            };
+            monthResults.push(m);
+        }
+        m.totalDays++;
+        if (dayPnl - dayBrokerage > 0) m.profitableDays++;
+        if (dayPnl - dayBrokerage > m.maxDayGain) m.maxDayGain = dayPnl - dayBrokerage;
+        if (dayPnl - dayBrokerage < m.maxDayLoss) m.maxDayLoss = dayPnl - dayBrokerage;
+
+        m.trades += dayTrades.length;
+        dayTrades.forEach(t => {
+            if (t.netPnl > 0) m!.wins++; else m!.losses++;
+            m!.grossPnl += t.pnl;
+            m!.brokerage += t.brokerage;
+            m!.netPnl += t.netPnl;
+        });
+        m.winRate = m.trades > 0 ? parseFloat(((m.wins / m.trades) * 100).toFixed(1)) : 0;
+
+        dayTrades = [];
+        dayPnl = 0;
+        dayBrokerage = 0;
+    };
+
+    for (let i = 1; i < allCandles.length; i++) {
+        const currentCandle = allCandles[i];
+        const dateObj = new Date(currentCandle.time * 1000 + 330 * 60000); // IST Approximation
+        const dateStr = dateObj.toISOString().split('T')[0];
+        const timeStr = dateObj.toISOString().split('T')[1].slice(0, 5); // HH:MM
+
+        // ── Day Transition ───────────────────────────────────────────
+        if (dateStr !== currentDayStr) {
+            // Force close any open position at EOD exactly at 15:29 / end of array
+            if (activePos) {
+                const exitPrice = allCandles[i - 1].close;
+                const pnlPts = activePos.type === 'LONG' ? exitPrice - activePos.entryPrice : activePos.entryPrice - exitPrice;
+                const pnl = pnlPts * 15 * 2; // Assuming BankNifty 2 lots
+                const brok = 60 + Math.abs(pnl) * 0.001;
+
+                const tr: BacktestTrade = {
+                    id: allTrades.length + 1, date: currentDayStr, entryTime: activePos.entryTimeStr, exitTime: '15:29',
+                    entryTimestamp: allCandles[activePos.entryIdx].time, exitTimestamp: allCandles[i - 1].time,
+                    type: activePos.type, signal: activePos.signal, entrySpot: activePos.entryPrice, exitSpot: exitPrice,
+                    entryIdx: activePos.entryIdx, exitIdx: i - 1, points: pnlPts, qty: 30, pnl, brokerage: brok, netPnl: pnl - brok,
+                    exitReason: 'EODCLOSE'
+                };
+                allTrades.push(tr);
+                dayTrades.push(tr);
+                signalCandles.push({ index: activePos.entryIdx, trade: tr });
+                dayPnl += pnl;
+                dayBrokerage += brok;
+                activePos = null;
+            }
+
+            if (currentDayStr !== '') {
+                endOfDay(currentDayStr);
+            }
+
+            currentDayStr = dateStr;
+            tradesToday = 0;
+
+            // Run pre-market analysis
+            currentPlan = TradingStrategy.runPreMarketAnalysis(allCandles.slice(0, i));
+        }
+
+        // ── Active Position Management ───────────────────────────────
+        if (activePos) {
+            const isLong = activePos.type === 'LONG';
+            const targetPrice = isLong ? activePos.entryPrice + activePos.targetPoints : activePos.entryPrice - activePos.targetPoints;
+            const slPrice = isLong ? activePos.entryPrice - activePos.slPoints : activePos.entryPrice + activePos.slPoints;
+
+            let exitReason: BacktestTrade['exitReason'] | null = null;
+            let exitPrice = 0;
+
+            if (isLong) {
+                if (currentCandle.high >= targetPrice) { exitReason = 'TARGET'; exitPrice = targetPrice; }
+                else if (currentCandle.low <= slPrice) { exitReason = 'SL'; exitPrice = slPrice; }
+            } else {
+                if (currentCandle.low <= targetPrice) { exitReason = 'TARGET'; exitPrice = targetPrice; }
+                else if (currentCandle.high >= slPrice) { exitReason = 'SL'; exitPrice = slPrice; }
+            }
+
+            // EOD hard stop
+            if (!exitReason && timeStr >= '15:15') { exitReason = 'EODCLOSE'; exitPrice = currentCandle.close; }
+
+            if (exitReason) {
+                const pnlPts = isLong ? exitPrice - activePos.entryPrice : activePos.entryPrice - exitPrice;
+                // Assuming NIFTY 50 lots, or BANKNIFTY 30 lots. Will default to 30.
+                const pnl = pnlPts * 30;
+                const brok = 60 + Math.abs(pnl) * 0.001;
+
+                const tr: BacktestTrade = {
+                    id: allTrades.length + 1, date: currentDayStr, entryTime: activePos.entryTimeStr, exitTime: timeStr,
+                    entryTimestamp: allCandles[activePos.entryIdx].time, exitTimestamp: currentCandle.time,
+                    type: activePos.type, signal: activePos.signal, entrySpot: activePos.entryPrice, exitSpot: exitPrice,
+                    entryIdx: activePos.entryIdx, exitIdx: i, points: pnlPts, qty: 30, pnl, brokerage: brok, netPnl: pnl - brok,
+                    exitReason
+                };
+                allTrades.push(tr);
+                dayTrades.push(tr);
+                signalCandles.push({ index: activePos.entryIdx, trade: tr });
+                dayPnl += pnl;
+                dayBrokerage += brok;
+                activePos = null;
+            }
+        }
+
+        // ── Signal Generation ─────────────────────────────────────────
+        if (!activePos && currentPlan && tradesToday < currentPlan.maxTradesAllowed) {
+            // Strategy only considers trades after 9:15
+            if (timeStr >= '09:16' && timeStr <= '15:00') {
+                const prevCandles = allCandles.slice(0, i);
+                const signal = TradingStrategy.checkAdrSignal(currentCandle, prevCandles, currentPlan);
+
+                if (signal.type !== 'NONE') {
+                    activePos = {
+                        type: signal.type === 'BUY' ? 'LONG' : 'SHORT',
+                        entryPrice: currentCandle.close,
+                        entryIdx: i,
+                        entryTimeStr: timeStr,
+                        signal: signal.reason,
+                        slPoints: signal.slPoints || 30,
+                        targetPoints: signal.targetPoints || 50
+                    };
+                    tradesToday++;
+                }
+            }
+        }
+    }
+
+    if (currentDayStr !== '') {
+        endOfDay(currentDayStr);
+    }
+
     const wins = allTrades.filter(t => t.netPnl > 0).length;
     const losses_cnt = allTrades.filter(t => t.netPnl <= 0).length;
     const grossPnl = allTrades.reduce((s, t) => s + t.pnl, 0);
@@ -152,7 +320,7 @@ export function runBacktest(allCandles: Candle[]): BacktestResult {
         largestWin: winPnls.length ? Math.max(...winPnls) : 0,
         largestLoss: lossPnls.length ? Math.min(...lossPnls) : 0,
         consecutiveLosses: maxConsec,
-        allCandles,
+        allCandles: allCandles as Candle[],
         signalCandles,
     };
 }
