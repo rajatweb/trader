@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     ArrowLeft, Play, RefreshCw, TrendingUp, TrendingDown,
-    BarChart3, Target, ShieldAlert, Calendar, Activity,
+    BarChart3, Target, ShieldAlert, Calendar as CalendarIcon, Activity,
     ChevronDown, ChevronUp, Download, AlertCircle, Zap,
     CheckCircle2, XCircle, Clock, Layers
 } from 'lucide-react';
@@ -11,6 +11,10 @@ import Link from 'next/link';
 import { useTradingStore } from '@/lib/store/tradingStore';
 import { runBacktest, BacktestResult, BacktestTrade } from '@/lib/algo/backtester';
 import AlgoRealtimeChart from '../algo/components/AlgoRealtimeChart';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { format } from 'date-fns';
+import { DateRange } from 'react-day-picker';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -69,8 +73,10 @@ export default function BacktestPage() {
     const twoMonthsAgo = new Date();
     twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
 
-    const [fromDate, setFromDate] = useState(twoMonthsAgo.toISOString().split('T')[0]);
-    const [toDate, setToDate] = useState(today.toISOString().split('T')[0]);
+    const [dateRange, setDateRange] = useState<DateRange | undefined>({
+        from: twoMonthsAgo,
+        to: today
+    });
 
     const [status, setStatus] = useState<'idle' | 'fetching' | 'running' | 'done' | 'error'>('idle');
     const [progress, setProgress] = useState(0);
@@ -81,6 +87,7 @@ export default function BacktestPage() {
     const [activeMonth, setActiveMonth] = useState<string | null>(null);
     const [activeDay, setActiveDay] = useState<string | null>(null);
     const [expandTrades, setExpandTrades] = useState(false);
+    const [instrument, setInstrument] = useState<'25' | '13'>('25'); // 25 = BANKNIFTY, 13 = NIFTY
 
     // Convert result signals to AlgoRealtimeChart-compatible signal format
     const chartSignals = result?.signalCandles.map(sc => ({
@@ -97,14 +104,18 @@ export default function BacktestPage() {
     // ── Fetch data in weekly chunks (Dhan 1m limit) ───────────────────────
     const fetchAndRun = useCallback(async () => {
         if (!brokerCredentials) { setErrorMsg('Connect your broker first.'); setStatus('error'); return; }
+        if (!dateRange?.from || !dateRange?.to) { setErrorMsg('Select a valid date range.'); setStatus('error'); return; }
+
         setStatus('fetching');
         setProgress(0);
         setResult(null);
         setErrorMsg('');
 
         try {
-            const from = new Date(fromDate);
-            const to = new Date(toDate);
+            const from = dateRange.from;
+            const to = dateRange.to;
+            const fromDateStr = from.toISOString().split('T')[0];
+            const toDateStr = to.toISOString().split('T')[0];
             const allCandles: any[] = [];
 
             // Split into weekly chunks
@@ -131,7 +142,7 @@ export default function BacktestPage() {
                     body: JSON.stringify({
                         clientId: brokerCredentials.clientId,
                         accessToken: brokerCredentials.accessToken,
-                        securityId: '25', // BANKNIFTY
+                        securityId: instrument, // 25=BNF, 13=NIFTY
                         exchangeSegment: 'IDX_I',
                         instrument: 'INDEX',
                         interval: '1',
@@ -177,7 +188,9 @@ export default function BacktestPage() {
 
             // Run backtest in next tick so React can update UI
             await new Promise(r => setTimeout(r, 50));
-            const bt = runBacktest(deduped);
+            // Assuming default quantity: 30 for BNF (2 lots of 15), 50 for NIFTY (2 lots of 25)
+            const qty = instrument === '25' ? 30 : 50;
+            const bt = runBacktest(deduped, { qty });
             setResult(bt);
             setProgress(100);
             setStatus('done');
@@ -189,7 +202,7 @@ export default function BacktestPage() {
             setErrorMsg(err.message || 'Backtest failed.');
             setStatus('error');
         }
-    }, [brokerCredentials, fromDate, toDate]);
+    }, [brokerCredentials, dateRange]);
 
     // ── Trades for active month & day ────────────────────────────────────────────
     const activeTrades: BacktestTrade[] = result
@@ -213,7 +226,7 @@ export default function BacktestPage() {
     const finalEquity = equityCurve[equityCurve.length - 1] ?? 0;
 
     return (
-        <div className="min-h-screen bg-[#0a0c10] text-slate-200 font-sans">
+        <div className="h-screen flex flex-col bg-[#0a0c10] text-slate-200 font-sans overflow-hidden">
             {/* Ambient */}
             <div className="fixed inset-0 pointer-events-none overflow-hidden">
                 <div className="absolute top-[-10%] right-[-5%] w-[35%] h-[35%] bg-violet-600/10 blur-[120px] rounded-full" />
@@ -221,8 +234,8 @@ export default function BacktestPage() {
             </div>
 
             {/* Header */}
-            <header className="sticky top-0 z-40 backdrop-blur-md bg-[#0a0c10]/70 border-b border-white/5">
-                <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <header className="flex-shrink-0 z-40 backdrop-blur-md bg-[#0a0c10]/70 border-b border-white/5">
+                <div className="w-full px-6 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <Link href="/apps" className="p-2 hover:bg-white/5 rounded-xl transition-colors text-slate-400 hover:text-white">
                             <ArrowLeft size={18} />
@@ -232,30 +245,50 @@ export default function BacktestPage() {
                                 <BarChart3 size={16} className="text-violet-400" />
                             </div>
                             <div>
-                                <h1 className="text-sm font-bold text-white leading-none">PDLS-VIX Backtester</h1>
-                                <p className="text-[10px] text-slate-500 mt-0.5">BankNifty · 1-Minute · Index-Point P&L</p>
+                                <h1 className="text-sm font-bold text-white leading-none">ADR Sniper Backtester</h1>
+                                <p className="text-[10px] text-slate-500 mt-0.5">{instrument === '25' ? 'BankNifty' : 'Nifty'} · 1-Minute · Option Premium Mimic</p>
                             </div>
                         </div>
                     </div>
 
                     {/* Controls */}
                     <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
-                            <Calendar size={12} className="text-slate-500" />
-                            <input
-                                type="date"
-                                value={fromDate}
-                                onChange={e => setFromDate(e.target.value)}
-                                className="bg-transparent text-[11px] font-mono text-slate-300 outline-none w-28"
-                            />
-                            <span className="text-slate-600 text-xs">→</span>
-                            <input
-                                type="date"
-                                value={toDate}
-                                onChange={e => setToDate(e.target.value)}
-                                className="bg-transparent text-[11px] font-mono text-slate-300 outline-none w-28"
-                            />
-                        </div>
+                        <select
+                            value={instrument}
+                            onChange={(e) => setInstrument(e.target.value as '25' | '13')}
+                            className="bg-white/5 border border-white/10 text-slate-300 text-xs rounded-xl px-3 py-2 outline-none"
+                        >
+                            <option value="25">BANKNIFTY</option>
+                            <option value="13">NIFTY</option>
+                        </select>
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <button className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-slate-300 hover:bg-white/10 transition-colors outline-none text-[11px] font-mono whitespace-nowrap">
+                                    <CalendarIcon size={12} className="text-slate-500" />
+                                    {dateRange?.from ? (
+                                        dateRange.to ? (
+                                            <>
+                                                {format(dateRange.from, "MMM dd, yyyy")} - {format(dateRange.to, "MMM dd, yyyy")}
+                                            </>
+                                        ) : (
+                                            format(dateRange.from, "MMM dd, yyyy")
+                                        )
+                                    ) : (
+                                        <span>Pick a date range</span>
+                                    )}
+                                </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="end">
+                                <Calendar
+                                    initialFocus
+                                    mode="range"
+                                    defaultMonth={dateRange?.from}
+                                    selected={dateRange}
+                                    onSelect={setDateRange}
+                                    numberOfMonths={2}
+                                />
+                            </PopoverContent>
+                        </Popover>
                         <button
                             onClick={fetchAndRun}
                             disabled={status === 'fetching' || status === 'running'}
@@ -270,7 +303,7 @@ export default function BacktestPage() {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto px-6 py-6 pb-24 space-y-6">
+            <main className={`flex-1 min-h-0 ${status === 'done' ? 'flex p-4 gap-4' : 'overflow-y-auto max-w-7xl mx-auto px-6 py-6 w-full'}`}>
 
                 {/* ── Progress / Error / Idle state ────────────────────────── */}
                 {status === 'idle' && (
@@ -281,10 +314,10 @@ export default function BacktestPage() {
                         <h2 className="text-white font-bold text-lg">Ready to Backtest</h2>
                         <p className="text-slate-500 text-sm text-center max-w-md">
                             Select a date range (up to 2 months) and click "Run Backtest".<br />
-                            The engine fetches real 1-min BANKNIFTY data from Dhan and runs the full PDLS-VIX strategy logic.
+                            The engine fetches real 1-min data from Dhan and runs the full ADR Sniper strategy logic.
                         </p>
                         <div className="flex gap-3 mt-2">
-                            {['9:30–11:30 window', 'PDH/PDL sweeps', '50pt TP · 30pt SL', '2 lots fixed'].map(t => (
+                            {['9:15–15:15 window', 'Dynamic Pre-Market Bias', 'ITM Strike Avoidance Logic', '2 lots fixed'].map(t => (
                                 <span key={t} className="text-[10px] font-bold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-3 py-1 rounded-full">{t}</span>
                             ))}
                         </div>
@@ -304,10 +337,10 @@ export default function BacktestPage() {
                         </div>
                         <div className="text-center">
                             <div className="text-white font-bold">
-                                {status === 'fetching' ? `Fetching historical data… ${progress}%` : 'Running PDLS-VIX strategy…'}
+                                {status === 'fetching' ? `Fetching historical data… ${progress}%` : 'Running ADR Sniper strategy…'}
                             </div>
                             <p className="text-slate-500 text-xs mt-1">
-                                {status === 'fetching' ? 'Downloading 1-min BANKNIFTY candles from Dhan API' : 'Simulating entries, exits, and daily risk state'}
+                                {status === 'fetching' ? `Downloading 1-min ${instrument === '25' ? 'BANKNIFTY' : 'NIFTY'} candles from Dhan API` : 'Simulating entries, exits, and daily risk state'}
                             </p>
                         </div>
                         <div className="w-64 h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -330,237 +363,184 @@ export default function BacktestPage() {
                 {/* ── Results ─────────────────────────────────────────────── */}
                 {status === 'done' && result && (
                     <>
-                        {/* Top KPI row */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-                            <StatCard label="Net P&L" value={fmtPnl(result.netPnl)} sub={`${result.totalTrades} trades`}
-                                color={result.netPnl >= 0 ? 'emerald' : 'rose'} icon={result.netPnl >= 0 ? TrendingUp : TrendingDown} />
-                            <StatCard label="Win Rate" value={`${result.winRate}%`} sub={`${result.wins}W / ${result.losses}L`}
-                                color={result.winRate >= 55 ? 'emerald' : result.winRate >= 45 ? 'amber' : 'rose'} icon={Target} />
-                            <StatCard label="Profit Factor" value={result.profitFactor >= 999 ? '∞' : String(result.profitFactor)}
-                                sub="Gross Win / Gross Loss" color={result.profitFactor >= 1.5 ? 'emerald' : result.profitFactor >= 1 ? 'amber' : 'rose'} icon={BarChart3} />
-                            <StatCard label="Max Drawdown" value={fmtPnl(-result.maxDrawdown)} sub="Peak to trough"
-                                color="rose" icon={ShieldAlert} />
-                            <StatCard label="Avg Win" value={fmtPnl(result.avgWin)} sub="Per winning trade"
-                                color="emerald" icon={TrendingUp} />
-                            <StatCard label="Avg Loss" value={fmtPnl(result.avgLoss)} sub="Per losing trade"
-                                color="rose" icon={TrendingDown} />
-                            <StatCard label="Max Consec. Loss" value={String(result.consecutiveLosses)} sub="In a row"
-                                color={result.consecutiveLosses >= 3 ? 'rose' : 'amber'} icon={Activity} />
-                            <StatCard label="Brokerage" value={fmtPnl(result.totalBrokerage)} sub="Total charges"
-                                color="slate" icon={Layers} />
-                        </div>
-
-                        {/* Chart */}
-                        <div className="flex flex-col" style={{ height: 520 }}>
-                            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                        {/* LEFT VISUAL PANEL */}
+                        <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-white/[0.02] border border-white/5 rounded-2xl p-4 gap-3">
+                            <div className="flex items-center justify-between flex-shrink-0">
                                 <div className="flex items-center gap-3">
                                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                                        BANKNIFTY · 1 min · {activeDay ? activeDay.slice(5) : (activeMonth ? activeMonth : 'ALL')}
+                                        {instrument === '25' ? 'BANKNIFTY' : 'NIFTY'} · 1 MIN · {activeDay ? activeDay.slice(5) : (activeMonth ? activeMonth : 'ALL')}
                                     </span>
                                     <span className="text-[10px] font-bold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full">
-                                        {activeTrades.length} signals marked
+                                        {activeTrades.length} SIGNALS MARKED
                                     </span>
                                     {activeDay && (
                                         <button
                                             onClick={() => setActiveDay(null)}
-                                            className="text-[10px] ml-2 font-bold px-2 py-0.5 rounded-full border border-rose-500/50 text-rose-400 hover:bg-rose-500/10"
+                                            className="text-[10px] ml-2 font-bold px-3 py-1 rounded-full border border-rose-500/50 text-rose-400 hover:bg-rose-500/10 transition-colors uppercase"
                                         >
                                             Reset Filter
                                         </button>
                                     )}
                                 </div>
                             </div>
-                            <div className="flex-1 min-h-0">
+
+                            <div className="flex-1 min-h-0 rounded-xl overflow-hidden bg-[#0a0c10] border border-white/5 relative">
                                 {activeDay && (
                                     <AlgoRealtimeChart
                                         data={result.allCandles.filter((c: any) => {
                                             const d = new Date(c.time * 1000 + 330 * 60000).toISOString().split('T')[0];
                                             return d === activeDay;
                                         })}
-                                        symbol="BANKNIFTY"
+                                        symbol={instrument === '25' ? 'BANKNIFTY' : 'NIFTY'}
                                         trades={activeTrades}
                                     />
                                 )}
                                 {!activeDay && (
-                                    <div className="h-full flex items-center justify-center border border-white/5 rounded-2xl bg-white/[0.02]">
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                         <div className="text-center">
-                                            <BarChart3 size={32} className="mx-auto text-slate-600 mb-3" />
-                                            <div className="text-sm font-bold text-slate-400">Select a specific Day to view its chart</div>
+                                            <BarChart3 size={40} className="mx-auto text-slate-800 mb-4" />
+                                            <div className="text-sm font-bold text-slate-500">Pick a Day on the right to view its Intraday sequence</div>
                                         </div>
                                     </div>
                                 )}
                             </div>
                         </div>
 
-                        {/* Equity Curve mini bar chart */}
-                        <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-5">
-                            <div className="flex items-center justify-between mb-4">
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Equity Curve</span>
-                                <span className={`text-sm font-black font-mono ${finalEquity >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                    {fmtPnl(finalEquity)}
-                                </span>
+                        {/* RIGHT METRICS LOG */}
+                        <div className="w-[450px] xl:w-[500px] flex-shrink-0 flex flex-col gap-4 overflow-y-auto pr-2 pb-6 custom-scrollbar">
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                                <StatCard label="Net P&L" value={fmtPnl(result.netPnl)} sub={`${result.totalTrades} Trades`} color={result.netPnl >= 0 ? 'emerald' : 'rose'} />
+                                <StatCard label="Win Rate" value={`${result.winRate}%`} sub={`${result.wins}W / ${result.losses}L`} color={result.winRate >= 55 ? 'emerald' : result.winRate >= 45 ? 'amber' : 'rose'} />
+                                <StatCard label="Drawdown" value={fmtPnl(-result.maxDrawdown)} sub="Peak to trough" color="rose" />
+                                <StatCard label="Avg Win" value={fmtPnl(result.avgWin)} sub="Per Winner" color="emerald" />
                             </div>
-                            <div className="h-24 flex items-end gap-0.5">
-                                {equityCurve.map((v, i) => {
-                                    const max = Math.max(Math.abs(peakEquity), Math.abs(Math.min(...equityCurve)));
-                                    const pct = max > 0 ? Math.abs(v) / max : 0;
-                                    const h = Math.max(2, pct * 96);
-                                    return (
-                                        <div key={i} className="flex-1 flex flex-col justify-end" title={`Trade ${i + 1}: ${fmtPnl(v)}`}>
-                                            <div
-                                                className={`rounded-sm transition-all ${v >= 0 ? 'bg-emerald-500/70' : 'bg-rose-500/70'}`}
-                                                style={{ height: h }}
-                                            />
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
 
-                        {/* Monthly grid */}
-                        <div>
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="h-px flex-1 bg-white/5" />
-                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Monthly Performance</span>
-                                <div className="h-px flex-1 bg-white/5" />
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                                {result.monthResults.map(m => (
-                                    <button
-                                        key={m.month}
-                                        onClick={() => setActiveMonth(activeMonth === m.month ? null : m.month)}
-                                        className={`text-left rounded-2xl border p-4 transition-all hover:bg-white/5 ${activeMonth === m.month
-                                            ? 'border-violet-500/40 bg-violet-500/5'
-                                            : 'border-white/5 bg-white/[0.02]'
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between mb-3">
-                                            <span className="text-xs font-bold text-white">{m.label}</span>
-                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${m.winRate >= 60 ? 'bg-emerald-500/15 text-emerald-400' :
-                                                m.winRate >= 45 ? 'bg-amber-500/15 text-amber-400' :
-                                                    'bg-rose-500/15 text-rose-400'
-                                                }`}>{m.winRate}% WR</span>
-                                        </div>
-                                        <div className={`text-2xl font-black font-mono mb-1 ${m.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                            {fmtPnl(m.netPnl)}
-                                        </div>
-                                        <div className="grid grid-cols-3 gap-2 mt-3">
-                                            {[
-                                                { l: 'Trades', v: String(m.trades) },
-                                                { l: 'Wins', v: String(m.wins), c: 'text-emerald-400' },
-                                                { l: 'Loss', v: String(m.losses), c: 'text-rose-400' },
-                                            ].map(x => (
-                                                <div key={x.l} className="bg-white/5 rounded-lg p-1.5 text-center">
-                                                    <div className={`text-xs font-bold ${x.c ?? 'text-white'}`}>{x.v}</div>
-                                                    <div className="text-[8px] text-slate-600">{x.l}</div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        {/* Day breakdown bar */}
-                                        <div className="mt-3 flex items-center gap-1">
-                                            <div className="h-1 rounded-full bg-emerald-500/60 transition-all" style={{ flex: m.profitableDays }} />
-                                            <div className="h-1 rounded-full bg-rose-500/40 transition-all" style={{ flex: m.totalDays - m.profitableDays }} />
-                                        </div>
-                                        <div className="text-[8px] text-slate-600 mt-1">{m.profitableDays}/{m.totalDays} profitable days</div>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Daily grid (only visible if activeMonth is chosen) */}
-                        {activeMonth && (
-                            <div>
-                                <div className="flex items-center gap-3 mb-4 mt-8">
-                                    <div className="h-px flex-1 bg-white/5" />
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Daily Breakdown — {activeMonthResult?.label}</span>
-                                    <div className="h-px flex-1 bg-white/5" />
+                            <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Equity Curve</span>
+                                    <span className={`text-xs font-black font-mono ${finalEquity >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {fmtPnl(finalEquity)}
+                                    </span>
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-3">
-                                    {result.dayResults.filter(d => d.date.startsWith(activeMonth)).map(d => (
-                                        <button
-                                            key={d.date}
-                                            onClick={() => setActiveDay(activeDay === d.date ? null : d.date)}
-                                            className={`rounded-2xl border p-3 text-center transition-all hover:bg-white/5 ${activeDay === d.date ? 'border-violet-500/50 bg-violet-500/10' : 'border-white/5 bg-white/[0.02]'}`}
-                                        >
-                                            <div className="text-[10px] font-bold text-slate-400 mb-1">{d.date.slice(5)}</div>
-                                            <div className={`text-base font-black font-mono tracking-tighter ${d.dayNetPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                {d.dayNetPnl > 0 ? '+' : ''}{fmt(d.dayNetPnl)}
+                                <div className="h-16 flex items-end gap-[1px]">
+                                    {equityCurve.map((v, i) => {
+                                        const max = Math.max(Math.abs(peakEquity), Math.abs(Math.min(...equityCurve)));
+                                        const pct = max > 0 ? Math.abs(v) / max : 0;
+                                        const h = Math.max(2, pct * 64);
+                                        return (
+                                            <div key={i} className="flex-1 flex flex-col justify-end" title={`Trade ${i + 1}: ${fmtPnl(v)}`}>
+                                                <div
+                                                    className={`rounded-sm transition-all ${v >= 0 ? 'bg-emerald-500/70' : 'bg-rose-500/70'}`}
+                                                    style={{ height: h }}
+                                                />
                                             </div>
-                                            <div className="text-[9px] text-slate-600 mt-1">{d.tradesTaken} trades</div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-1 mb-2">Monthly Filter</div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {result.monthResults.map(m => (
+                                        <button
+                                            key={m.month}
+                                            onClick={() => setActiveMonth(activeMonth === m.month ? null : m.month)}
+                                            className={`text-left rounded-xl border p-3 transition-all hover:bg-white/5 ${activeMonth === m.month
+                                                ? 'border-violet-500/40 bg-violet-500/5'
+                                                : 'border-white/5 bg-white/[0.02]'
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-[11px] font-bold text-white">{m.label}</span>
+                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${m.winRate >= 60 ? 'bg-emerald-500/15 text-emerald-400' :
+                                                    m.winRate >= 45 ? 'bg-amber-500/15 text-amber-400' :
+                                                        'bg-rose-500/15 text-rose-400'
+                                                    }`}>{m.winRate}%</span>
+                                            </div>
+                                            <div className={`text-lg font-black font-mono mb-2 ${m.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {fmtPnl(m.netPnl)}
+                                            </div>
+                                            <div className="text-[8px] text-slate-500 flex justify-between uppercase">
+                                                <span>Trades: {m.trades}</span>
+                                                <span>{m.profitableDays}/{m.totalDays} Days Profit</span>
+                                            </div>
                                         </button>
                                     ))}
                                 </div>
                             </div>
-                        )}
 
-                        {/* Trade Log */}
-                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-hidden">
-                            <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <Clock size={14} className="text-slate-500" />
-                                    <span className="text-sm font-bold text-white">
-                                        Trade Log {activeMonth ? `— ${result.monthResults.find(m => m.month === activeMonth)?.label}` : '— All Trades'}
-                                    </span>
-                                    <span className="text-[10px] bg-white/5 text-slate-400 px-2 py-0.5 rounded-full">{activeTrades.length} trades</span>
-                                </div>
-                                <button
-                                    onClick={() => setExpandTrades(!expandTrades)}
-                                    className="text-slate-500 hover:text-white transition-colors p-1"
-                                >
-                                    {expandTrades ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                                </button>
-                            </div>
-
-                            {/* Always show last 10 visible trades, toggle to expand */}
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-[11px]">
-                                    <thead>
-                                        <tr className="border-b border-white/5">
-                                            {['Date', 'Entry', 'Exit', 'Type', 'Signal', 'Entry Spot', 'Exit Spot', 'Points', 'Net P&L', 'Exit Reason'].map(h => (
-                                                <th key={h} className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-600 uppercase tracking-widest whitespace-nowrap">
-                                                    {h}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {(expandTrades ? activeTrades : activeTrades.slice(0, 20)).map(t => (
-                                            <tr key={t.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-                                                <td className="px-4 py-2.5 font-mono text-slate-400">{t.date.slice(5)}</td>
-                                                <td className="px-4 py-2.5 font-mono text-slate-300">{t.entryTime}</td>
-                                                <td className="px-4 py-2.5 font-mono text-slate-300">{t.exitTime}</td>
-                                                <td className="px-4 py-2.5">
-                                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${t.type === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>
-                                                        {t.type === 'LONG' ? 'CE BUY' : 'PE BUY'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-2.5 text-slate-500 max-w-[160px] truncate" title={t.signal}>{t.signal}</td>
-                                                <td className="px-4 py-2.5 font-mono text-slate-300">{fmt(t.entrySpot)}</td>
-                                                <td className="px-4 py-2.5 font-mono text-slate-300">{fmt(t.exitSpot)}</td>
-                                                <td className={`px-4 py-2.5 font-mono font-bold ${t.points >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                    {fmtPts(t.points)}
-                                                </td>
-                                                <td className={`px-4 py-2.5 font-mono font-bold ${t.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                    {fmtPnl(t.netPnl)}
-                                                </td>
-                                                <td className="px-4 py-2.5">
-                                                    <span className={`text-[9px] font-bold ${t.exitReason === 'TARGET' ? 'text-emerald-400' :
-                                                        t.exitReason === 'SL' ? 'text-rose-400' :
-                                                            t.exitReason === 'EODCLOSE' ? 'text-amber-400' :
-                                                                'text-slate-500'
-                                                        }`}>{t.exitReason}</span>
-                                                </td>
-                                            </tr>
+                            {activeMonth && (
+                                <div>
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-1 mb-2">Day Viewer — {activeMonthResult?.label}</div>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {result.dayResults.filter(d => d.date.startsWith(activeMonth)).map(d => (
+                                            <button
+                                                key={d.date}
+                                                onClick={() => setActiveDay(activeDay === d.date ? null : d.date)}
+                                                className={`rounded-xl border p-2 text-center transition-all hover:bg-white/5 ${activeDay === d.date ? 'border-violet-500/50 bg-violet-500/10 border-solid' : 'border-white/5 bg-white/[0.02] border-dashed'}`}
+                                            >
+                                                <div className="text-[9px] font-bold text-slate-400 mb-0.5">{d.date.slice(5)}</div>
+                                                <div className={`text-[11px] font-black font-mono tracking-tighter ${d.dayNetPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {d.dayNetPnl > 0 ? '+' : ''}{fmt(d.dayNetPnl)}
+                                                </div>
+                                            </button>
                                         ))}
-                                    </tbody>
-                                </table>
-                                {activeTrades.length > 20 && !expandTrades && (
-                                    <div className="px-4 py-3 text-center">
-                                        <button onClick={() => setExpandTrades(true)} className="text-[10px] text-slate-500 hover:text-white transition-colors">
-                                            Show all {activeTrades.length} trades ↓
-                                        </button>
                                     </div>
-                                )}
+                                </div>
+                            )}
+
+                            <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-hidden mt-1">
+                                <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
+                                    <div className="flex items-center gap-2">
+                                        <Clock size={12} className="text-slate-500" />
+                                        <span className="text-[11px] font-bold text-white uppercase tracking-widest">Trade Log {activeDay ? `(${activeDay.slice(5)})` : activeMonth ? `(${activeMonthResult?.label})` : ''}</span>
+                                    </div>
+                                    <span className="text-[9px] bg-white/5 text-slate-400 px-1.5 py-0.5 rounded-full">{activeTrades.length} records</span>
+                                </div>
+
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-[10px]">
+                                        <thead>
+                                            <tr className="border-b border-white/5 bg-black/20">
+                                                {['Time', 'Dir', 'Signal', 'Net PnL'].map(h => (
+                                                    <th key={h} className="px-3 py-2 text-left font-bold text-slate-500 uppercase">
+                                                        {h}
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {activeTrades.slice(0, 50).map(t => (
+                                                <tr key={t.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                                                    <td className="px-3 py-2 font-mono text-slate-400">
+                                                        <div className="leading-none">{t.entryTime}</div>
+                                                        <div className="text-[8px] text-slate-600 mt-1">{t.date.slice(5)}</div>
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        <span className={`px-1 py-0.5 rounded text-[8px] font-monospace font-black ${t.type === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>
+                                                            {t.type === 'LONG' ? 'CE' : 'PE'}
+                                                        </span>
+                                                        <div className="text-[8px] text-slate-500 mt-1 lowercase truncate w-10">{t.exitReason}</div>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-[9px] text-slate-500 max-w-[120px] truncate" title={t.signal}>
+                                                        {t.signal}
+                                                    </td>
+                                                    <td className={`px-3 py-2 font-mono font-bold text-right ${t.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                        {fmtPnl(t.netPnl)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {activeTrades.length > 50 && (
+                                                <tr>
+                                                    <td colSpan={4} className="px-3 py-3 text-center text-slate-600 font-bold text-[9px] bg-black/10">
+                                                        +{activeTrades.length - 50} older trades hidden
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </>

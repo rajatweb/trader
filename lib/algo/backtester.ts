@@ -95,7 +95,7 @@ export interface BacktestResult {
 // Main backtester
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function runBacktest(allBaseCandles: Candle[]): BacktestResult {
+export function runBacktest(allBaseCandles: Candle[], opts: { qty: number }): BacktestResult {
     if (allBaseCandles.length === 0) {
         return emptyResult(allBaseCandles);
     }
@@ -174,14 +174,14 @@ export function runBacktest(allBaseCandles: Candle[]): BacktestResult {
             if (activePos) {
                 const exitPrice = allCandles[i - 1].close;
                 const pnlPts = activePos.type === 'LONG' ? exitPrice - activePos.entryPrice : activePos.entryPrice - exitPrice;
-                const pnl = pnlPts * 15 * 2; // Assuming BankNifty 2 lots
+                const pnl = pnlPts * opts.qty;
                 const brok = 60 + Math.abs(pnl) * 0.001;
 
                 const tr: BacktestTrade = {
                     id: allTrades.length + 1, date: currentDayStr, entryTime: activePos.entryTimeStr, exitTime: '15:29',
                     entryTimestamp: allCandles[activePos.entryIdx].time, exitTimestamp: allCandles[i - 1].time,
                     type: activePos.type, signal: activePos.signal, entrySpot: activePos.entryPrice, exitSpot: exitPrice,
-                    entryIdx: activePos.entryIdx, exitIdx: i - 1, points: pnlPts, qty: 30, pnl, brokerage: brok, netPnl: pnl - brok,
+                    entryIdx: activePos.entryIdx, exitIdx: i - 1, points: pnlPts, qty: opts.qty, pnl, brokerage: brok, netPnl: pnl - brok,
                     exitReason: 'EODCLOSE'
                 };
                 allTrades.push(tr);
@@ -225,15 +225,14 @@ export function runBacktest(allBaseCandles: Candle[]): BacktestResult {
 
             if (exitReason) {
                 const pnlPts = isLong ? exitPrice - activePos.entryPrice : activePos.entryPrice - exitPrice;
-                // Assuming NIFTY 50 lots, or BANKNIFTY 30 lots. Will default to 30.
-                const pnl = pnlPts * 30;
+                const pnl = pnlPts * opts.qty;
                 const brok = 60 + Math.abs(pnl) * 0.001;
 
                 const tr: BacktestTrade = {
                     id: allTrades.length + 1, date: currentDayStr, entryTime: activePos.entryTimeStr, exitTime: timeStr,
                     entryTimestamp: allCandles[activePos.entryIdx].time, exitTimestamp: currentCandle.time,
                     type: activePos.type, signal: activePos.signal, entrySpot: activePos.entryPrice, exitSpot: exitPrice,
-                    entryIdx: activePos.entryIdx, exitIdx: i, points: pnlPts, qty: 30, pnl, brokerage: brok, netPnl: pnl - brok,
+                    entryIdx: activePos.entryIdx, exitIdx: i, points: pnlPts, qty: opts.qty, pnl, brokerage: brok, netPnl: pnl - brok,
                     exitReason
                 };
                 allTrades.push(tr);
