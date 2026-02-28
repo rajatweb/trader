@@ -144,17 +144,17 @@ export function useAlgoRunner(chartData: any[] = []) {
                 });
             }
 
-            // ── C. Track first 15-minute range (9:15–9:30) ────────────────
-            if (tStr >= '09:15' && tStr < '09:30' && latestCandles.length > 0) {
-                const recent = latestCandles[latestCandles.length - 1];
-                if (recent) {
-                    if (recent.high > first15MinHighRef.current) first15MinHighRef.current = recent.high;
-                    if (recent.low < first15MinLowRef.current) first15MinLowRef.current = recent.low;
+            // ── C. Opening Range = 9:15 candle only → entry fires at 9:16 ──
+            if (tStr === '09:15' && latestCandles.length > 0) {
+                const c9_15 = latestCandles[latestCandles.length - 1];
+                if (c9_15) {
+                    first15MinHighRef.current = c9_15.high;
+                    first15MinLowRef.current = c9_15.low;
                 }
             }
-            if (tStr >= '09:30' && !first15DoneRef.current) {
+            if (tStr >= '09:16' && !first15DoneRef.current && first15MinHighRef.current > 0) {
                 first15DoneRef.current = true;
-                console.log(`[AlgoRunner] 15m range: High ${first15MinHighRef.current}, Low ${first15MinLowRef.current}`);
+                console.log(`[AlgoRunner] 9:15 OR candle set: H=${first15MinHighRef.current} L=${first15MinLowRef.current} | Plan will fire at 9:16+`);
             }
 
             // ── D. Hard stop: daily loss cap or end-time ───────────────────

@@ -4,6 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { AlgoSignal } from '@/lib/algo/types';
+import { computeSuperTrend } from '@/lib/algo/supertrendStrategy';
 
 export interface OHLCV {
     time: number;
@@ -20,6 +21,7 @@ interface AlgoRealtimeChartProps {
     zones?: any[];
     height?: number;
     symbol: string;
+    activeStrategy?: 'PDLS_VIX' | 'SL_HUNT' | 'SUPERTREND';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +109,7 @@ function getTodayRange(data: OHLCV[]) {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [], zones = [], height, symbol }) => {
+const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [], zones = [], height, symbol, activeStrategy = 'PDLS_VIX' }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const svgRef = useRef<SVGSVGElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -119,6 +121,7 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
     const [showEqLvls, setShowEqLvls] = useState(true);
     const [showZones, setShowZones] = useState(true);
     const [showToday, setShowToday] = useState(true);
+    const [showST, setShowST] = useState(true);  // SuperTrend
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -175,6 +178,9 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
         const swings = detectSwings(recentData, 5);
         const eqLevels = detectEqualLevels(swings, 0.002);
         const todayRange = getTodayRange(data);
+
+        // SuperTrend (7,3) on 5-min candles — only when SUPERTREND strategy active
+        const stData = activeStrategy === 'SUPERTREND' ? computeSuperTrend(data) : [];
 
         // Map recentData indices back to full data indices
         const recentOffset = data.length - recentData.length;
@@ -424,6 +430,77 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
             });
         };
 
+        // ── SuperTrend Overlay ────────────────────────────────────────────────
+        const stG = chartArea.append('g').attr('class', 'supertrend');
+        const drawSuperTrend = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
+            stG.selectAll('*').remove();
+            if (!showST || stData.length === 0) return;
+
+            // Draw colored segments (green UP, red DOWN)
+            let segStart = 0;
+            while (segStart < stData.length) {
+                const dir = stData[segStart].direction;
+                let segEnd = segStart;
+                while (segEnd < stData.length - 1 && stData[segEnd + 1].direction === dir) segEnd++;
+
+                // Build path points for this segment
+                const pts: [number, number][] = [];
+                for (let k = segStart; k <= segEnd; k++) {
+                    const xPos = sx(k);
+                    if (stData[k].value <= 0) { segStart = segEnd + 1; continue; }
+                    pts.push([xPos, sy(stData[k].value)]);
+                }
+
+                if (pts.length >= 2) {
+                    const lineGen = d3.line<[number, number]>().x(d => d[0]).y(d => d[1]).curve(d3.curveMonotoneX);
+                    stG.append('path')
+                        .datum(pts)
+                        .attr('d', lineGen)
+                        .attr('stroke', dir === 'UP' ? '#10b981' : '#f43f5e')
+                        .attr('stroke-width', 2)
+                        .attr('fill', 'none')
+                        .attr('opacity', 0.85)
+                        .attr('stroke-linecap', 'round');
+                }
+
+                segStart = segEnd + 1;
+            }
+
+            // Flip circles + labels at direction change points
+            stData.forEach((pt, i) => {
+                if (!pt.flip || pt.value <= 0) return;
+                const xPos = sx(i);
+                const yPos = sy(pt.value);
+                if (xPos < -10 || xPos > widthChart + 10) return;
+
+                const isUp = pt.direction === 'UP';
+                const color = isUp ? '#10b981' : '#f43f5e';
+                const label = isUp ? '▲ CE' : '▼ PE';
+                const offsetY = isUp ? 14 : -14;
+
+                // Outer glow ring
+                stG.append('circle')
+                    .attr('cx', xPos).attr('cy', yPos)
+                    .attr('r', 8)
+                    .attr('fill', color).attr('opacity', 0.15);
+
+                // Solid dot
+                stG.append('circle')
+                    .attr('cx', xPos).attr('cy', yPos)
+                    .attr('r', 4)
+                    .attr('fill', color).attr('stroke', '#0a0c10').attr('stroke-width', 1.5);
+
+                // Label
+                stG.append('text')
+                    .attr('x', xPos).attr('y', yPos + offsetY)
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', color)
+                    .attr('font-size', '9px').attr('font-weight', 'bold')
+                    .attr('opacity', 0.95)
+                    .text(label);
+            });
+        };
+
         // ── Candles ───────────────────────────────────────────────────────────
         const candleG = chartArea.append('g').attr('class', 'candles');
         const drawCandles = (sx: d3.ScaleLinear<number, number>, sy: d3.ScaleLinear<number, number>) => {
@@ -574,6 +651,7 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
             drawLevels(sx, sy);
             drawEqualLevels(sx, sy);
             drawSwings(sx, sy);
+            drawSuperTrend(sx, sy);
             drawCandles(sx, sy);
             drawSignals(sx, sy);
             drawAxes(sx, sy);
@@ -643,7 +721,7 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
             priceText.style('display', 'none');
         });
 
-    }, [data, signals, zones, dimensions, symbol, showSwings, showEqLvls, showZones, showToday]);
+    }, [data, signals, zones, dimensions, symbol, showSwings, showEqLvls, showZones, showToday, showST]);
 
     return (
         <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-[#0a0c10]/40 rounded-3xl border border-white/5 backdrop-blur-sm">
@@ -660,6 +738,9 @@ const AlgoRealtimeChart: React.FC<AlgoRealtimeChartProps> = ({ data, signals = [
                     { key: 'swings', label: 'Swings', active: showSwings, set: setShowSwings, color: 'text-amber-400 border-amber-500/30' },
                     { key: 'eq', label: 'EQ H/L', active: showEqLvls, set: setShowEqLvls, color: 'text-yellow-400 border-yellow-500/30' },
                     { key: 'today', label: 'Today', active: showToday, set: setShowToday, color: 'text-blue-400 border-blue-500/30' },
+                    ...(activeStrategy === 'SUPERTREND' ? [
+                        { key: 'st', label: 'SuperTrend', active: showST, set: setShowST, color: 'text-emerald-400 border-emerald-500/30' }
+                    ] : []),
                 ].map(t => (
                     <button
                         key={t.key}

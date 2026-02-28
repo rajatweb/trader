@@ -1,792 +1,518 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    ArrowLeft,
-    Play,
-    Settings,
-    Calendar,
-    BarChart3,
-    History,
-    TrendingUp,
-    Percent,
-    Target,
-    ShieldAlert,
-    ChevronRight,
-    Search,
-    Download,
-    Share2,
-    Filter,
-    ChevronLeft,
-    ChevronRight as ChevronRightIcon,
-    FastForward,
-    Rewind,
-    Plus,
-    Minus,
-    Layers,
-    Clock,
-    Activity,
-    RefreshCw,
-    AlertCircle,
-    ArrowUpRight,
-    ArrowDownRight,
-    X
+    ArrowLeft, Play, RefreshCw, TrendingUp, TrendingDown,
+    BarChart3, Target, ShieldAlert, Calendar, Activity,
+    ChevronDown, ChevronUp, Download, AlertCircle, Zap,
+    CheckCircle2, XCircle, Clock, Layers
 } from 'lucide-react';
 import Link from 'next/link';
-import { motion, AnimatePresence } from 'framer-motion';
-
-import D3Chart, { OHLCV } from './components/D3Chart';
-
 import { useTradingStore } from '@/lib/store/tradingStore';
+import { runBacktest, BacktestResult, BacktestTrade } from '@/lib/algo/backtester';
+import AlgoRealtimeChart from '../algo/components/AlgoRealtimeChart';
 
-interface Instrument {
-    exchange: string;
-    segment: string;
-    securityId: string;
-    symbol: string;
-    tradingSymbol: string;
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fmt(v: number, dec = 0) {
+    return new Intl.NumberFormat('en-IN', { maximumFractionDigits: dec }).format(v);
+}
+function fmtPnl(v: number) {
+    const s = v >= 0 ? '+' : '';
+    return `${s}₹${fmt(Math.abs(v))}`;
+}
+function fmtPts(v: number) {
+    const s = v >= 0 ? '+' : '';
+    return `${s}${v.toFixed(1)} pts`;
 }
 
-const MOCK_HISTORICAL_CHAIN = [
-    { strike: 22000, ce_ltp: 450.5, pe_ltp: 12.3, ce_oi: '45L', pe_oi: '2L' },
-    { strike: 22100, ce_ltp: 380.2, pe_ltp: 25.8, ce_oi: '32L', pe_oi: '5L' },
-    { strike: 22200, ce_ltp: 315.0, pe_ltp: 48.5, ce_oi: '28L', pe_oi: '12L' },
-    { strike: 22300, ce_ltp: 245.8, pe_ltp: 92.4, ce_oi: '55L', pe_oi: '45L' }, // ATM
-    { strike: 22400, ce_ltp: 185.3, pe_ltp: 155.0, ce_oi: '12L', pe_oi: '65L' },
-    { strike: 22500, ce_ltp: 125.1, pe_ltp: 220.8, ce_oi: '8L', pe_oi: '38L' },
-    { strike: 22600, ce_ltp: 85.5, pe_ltp: 310.2, ce_oi: '3L', pe_oi: '25L' },
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Stat Card
+// ─────────────────────────────────────────────────────────────────────────────
 
-export default function ManualBacktestPage() {
-    const { brokerCredentials } = useTradingStore();
-    const [currentTime, setCurrentTime] = useState("");
-    const [spotPrice, setSpotPrice] = useState(0);
-    const [chartData, setChartData] = useState<OHLCV[]>([]);
-    const [playbackIndex, setPlaybackIndex] = useState(0);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
-
-    // Config States
-    const [selectDate, setSelectDate] = useState(new Date().toISOString().split('T')[0]);
-    const [selectedInst, setSelectedInst] = useState<Instrument>({
-        exchange: 'NSE',
-        segment: 'IDX_I',
-        securityId: '13',
-        symbol: 'NIFTY 50',
-        tradingSymbol: 'NIFTY'
-    });
-
-    const [activePositions, setActivePositions] = useState<any[]>([]);
-    const [rollingData, setRollingData] = useState<Record<string, { ce: any[], pe: any[] }>>({});
-    const [simPositions, setSimPositions] = useState<any[]>([]);
-    const [tradeLogs, setTradeLogs] = useState<{ time: string, msg: string, color: string }[]>([]);
-    const [isExecuting, setIsExecuting] = useState(false);
-    const [strikeOffset, setStrikeOffset] = useState(0); // 0 = ATM, -1 = ATM-1, etc.
-
-    const formatRollingData = (raw: any, fallbackStrike?: number) => {
-        if (!raw || !raw.timestamp || !raw.close) return [];
-
-        const getTs = (val: any) => {
-            const n = Number(val);
-            return n > 20000000000 ? n / 1000 : n;
-        };
-
-        const step = selectedInst.symbol.includes('BANK') ? 100 : 50;
-
-        return raw.timestamp.map((t: number, i: number) => {
-            const s = Number(raw.strike ? raw.strike[i] : (fallbackStrike || 0));
-            return {
-                time: getTs(t),
-                close: Number(raw.close[i] || 0),
-                // If strike is missing/NaN, we can't easily infer it here without spot, 
-                // but let's at least ensure it's not NaN
-                strike: isNaN(s) ? (fallbackStrike || 0) : s
-            };
-        });
+function StatCard({ label, value, sub, color = 'slate', icon: Icon }: {
+    label: string; value: string; sub?: string;
+    color?: 'emerald' | 'rose' | 'blue' | 'amber' | 'violet' | 'slate';
+    icon?: React.ElementType;
+}) {
+    const colors = {
+        emerald: 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400',
+        rose: 'border-rose-500/20 bg-rose-500/5 text-rose-400',
+        blue: 'border-blue-500/20 bg-blue-500/5 text-blue-400',
+        amber: 'border-amber-500/20 bg-amber-500/5 text-amber-400',
+        violet: 'border-violet-500/20 bg-violet-500/5 text-violet-400',
+        slate: 'border-white/10 bg-white/[0.03] text-slate-300',
     };
-
-    useEffect(() => {
-        if (!brokerCredentials) return;
-        fetchHistory();
-    }, [selectDate, selectedInst, brokerCredentials]);
-
-    // Auto Play Logic
-    useEffect(() => {
-        let timer: any;
-        if (isPlaying && playbackIndex < chartData.length - 1) {
-            timer = setInterval(() => {
-                setPlaybackIndex(prev => prev + 1);
-            }, 1000); // 1 candle per second
-        } else if (playbackIndex >= chartData.length - 1) {
-            setIsPlaying(false);
-        }
-        return () => clearInterval(timer);
-    }, [isPlaying, playbackIndex, chartData.length]);
-
-    const fetchHistory = async () => {
-        setIsLoading(true);
-        setPlaybackIndex(0);
-        setIsPlaying(false);
-        try {
-            // Fetch previous 2 days + selected day for continuity
-            const targetDate = new Date(selectDate);
-            const fromDate = new Date(targetDate);
-            fromDate.setDate(fromDate.getDate() - 3); // 3 days ago
-
-            const res = await fetch('/api/dhan/historical', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    clientId: brokerCredentials?.clientId,
-                    accessToken: brokerCredentials?.accessToken,
-                    securityId: selectedInst.securityId,
-                    exchangeSegment: selectedInst.segment,
-                    instrument: selectedInst.segment.includes('IDX') ? 'INDEX' : 'EQUITY',
-                    fromDate: fromDate.toISOString().split('T')[0],
-                    toDate: selectDate
-                })
-            });
-
-            const json = await res.json();
-
-            if (json.success && json.data) {
-                // Dhan can return data directly or nested in a 'data' field
-                let raw = json.data;
-                if (raw.data && (Array.isArray(raw.data) || typeof raw.data === 'object')) {
-                    raw = raw.data;
-                }
-
-                let formatted: OHLCV[] = [];
-
-                const getTimestamp = (val: any) => {
-                    if (typeof val === 'string') return new Date(val).getTime() / 1000;
-                    if (typeof val === 'number') {
-                        // Dhan sometimes returns seconds, sometimes milliseconds
-                        return val > 20000000000 ? val / 1000 : val;
-                    }
-                    return 0;
-                };
-
-                if (Array.isArray(raw)) {
-                    formatted = raw.map((d: any) => ({
-                        time: getTimestamp(d.start_Time || d.timestamp || d.timeStamp || d.time),
-                        open: d.open,
-                        high: d.high,
-                        low: d.low,
-                        close: d.close,
-                        volume: d.volume || 0
-                    }));
-                } else if (raw && typeof raw === 'object') {
-                    const timeKey = ['start_Time', 'timestamp', 'timeStamp', 'time'].find(k => Array.isArray(raw[k]));
-                    if (timeKey) {
-                        const times = raw[timeKey];
-                        for (let i = 0; i < times.length; i++) {
-                            formatted.push({
-                                time: getTimestamp(times[i]),
-                                open: raw.open?.[i] || 0,
-                                high: raw.high?.[i] || 0,
-                                low: raw.low?.[i] || 0,
-                                close: raw.close?.[i] || 0,
-                                volume: raw.volume?.[i] || 0
-                            });
-                        }
-                    }
-                }
-
-                if (formatted.length > 0) {
-                    setChartData(formatted);
-
-                    // Match the selected date (IST)
-                    const targetDateStr = selectDate; // YYYY-MM-DD
-                    const openIndex = formatted.findIndex(d => {
-                        const date = new Date(d.time * 1000);
-                        // Convert to Indian local date string for comparison
-                        const dStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD
-                        const h = date.getHours();
-                        const m = date.getMinutes();
-                        return dStr === targetDateStr && (h > 9 || (h === 9 && m >= 15));
-                    });
-
-                    setPlaybackIndex(openIndex !== -1 ? openIndex : 0);
-
-                    // Also fetch Rolling Option Data (ATM) for the selected period
-                    fetchRollingData();
-                } else {
-                    setChartData([]);
-                    setPlaybackIndex(0);
-                }
-            } else {
-                setChartData([]);
-                setPlaybackIndex(0);
-            }
-        } catch (err) {
-            console.error("Failed to fetch historical data", err);
-            setChartData([]);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const fetchRollingData = async () => {
-        if (!brokerCredentials) return;
-        try {
-            const targetDate = new Date(selectDate);
-            const fromDate = new Date(targetDate);
-            fromDate.setDate(fromDate.getDate() - 1);
-
-            // Fetch ATM only initially for the display panel
-            const res = await fetch('/api/dhan/rolling', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    clientId: brokerCredentials.clientId,
-                    accessToken: brokerCredentials.accessToken,
-                    securityId: selectedInst.securityId,
-                    exchangeSegment: 'NSE_FNO',
-                    instrument: 'OPTIDX',
-                    expiryFlag: 'MONTH',
-                    expiryCode: 1,
-                    strike: 'ATM',
-                    fromDate: fromDate.toISOString().split('T')[0],
-                    toDate: selectDate
-                })
-            });
-
-            const json = await res.json();
-            if (json.success && json.data?.data) {
-                const ceRaw = json.data.data.ce;
-                const peRaw = json.data.data.pe;
-
-                const atmData = {
-                    ce: formatRollingData(ceRaw),
-                    pe: formatRollingData(peRaw)
-                };
-
-                setRollingData({ 'ATM': atmData });
-
-                // Proactively cache the neighbors to reduce 'Fetch on Buy' latency
-                // We do this with a significant delay to avoid 429 on page load
-                const neighbors = ['ATM-1', 'ATM-2', 'ATM+1', 'ATM+2'];
-                for (const strike of neighbors) {
-                    await new Promise(r => setTimeout(r, 1000));
-                    fetchSpecificRelStrike(strike);
-                }
-            }
-        } catch (err) {
-            console.error("Failed to fetch initial rolling data", err);
-        }
-    };
-
-    const fetchSpecificRelStrike = async (rel: string) => {
-        if (!brokerCredentials) return;
-        try {
-            const targetDate = new Date(selectDate);
-            const fromDate = new Date(targetDate);
-            fromDate.setDate(fromDate.getDate() - 1);
-
-            const res = await fetch('/api/dhan/rolling', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    clientId: brokerCredentials.clientId,
-                    accessToken: brokerCredentials.accessToken,
-                    securityId: selectedInst.securityId,
-                    exchangeSegment: 'NSE_FNO',
-                    instrument: 'OPTIDX',
-                    expiryFlag: 'WEEK',
-                    expiryCode: 1,
-                    strike: rel,
-                    fromDate: fromDate.toISOString().split('T')[0],
-                    toDate: selectDate
-                })
-            });
-            const json = await res.json();
-            if (json.success && json.data?.data) {
-                setRollingData(prev => ({
-                    ...prev,
-                    [rel]: {
-                        ce: formatRollingData(json.data.data.ce),
-                        pe: formatRollingData(json.data.data.pe)
-                    }
-                }));
-            }
-        } catch (e) { }
-    };
-
-    const fetchSpecificStrike = async (strikeValue: number) => {
-        if (rollingData[strikeValue]) return rollingData[strikeValue];
-        if (!brokerCredentials) return null;
-
-        try {
-            const targetDate = new Date(selectDate);
-            const fromDate = new Date(targetDate);
-            fromDate.setDate(fromDate.getDate() - 1);
-
-            const res = await fetch('/api/dhan/rolling', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    clientId: brokerCredentials.clientId,
-                    accessToken: brokerCredentials.accessToken,
-                    securityId: selectedInst.securityId,
-                    exchangeSegment: 'NSE_FNO',
-                    instrument: 'OPTIDX',
-                    expiryFlag: 'WEEK',
-                    expiryCode: 1,
-                    strike: strikeValue?.toString() || 'ATM',
-                    fromDate: fromDate.toISOString().split('T')[0],
-                    toDate: selectDate
-                })
-            });
-
-            const json = await res.json();
-            if (json.success && json.data?.data) {
-                const data = {
-                    ce: formatRollingData(json.data.data.ce, strikeValue),
-                    pe: formatRollingData(json.data.data.pe, strikeValue)
-                };
-
-                setRollingData(prev => ({ ...prev, [strikeValue]: data }));
-                return data;
-            }
-        } catch (err) {
-            console.error(`Failed to fetch specific strike ${strikeValue}`, err);
-        }
-        return null;
-    };
-
-    // Derived States
-    const currentCandle = chartData[playbackIndex];
-    const visibleData = chartData.slice(0, playbackIndex + 1);
-
-    // Locked Strike Price Finder
-    const getOptionPrice = (type: 'CE' | 'PE', lockedStrike?: number) => {
-        if (!currentCandle) return 0;
-
-        // If we are tracking a fixed strike: Search all cached data for this absolute strike
-        if (lockedStrike) {
-            for (const key in rollingData) {
-                const leg = type === 'CE' ? rollingData[key].ce : rollingData[key].pe;
-                const match = leg.find((d: any) => Math.abs(d.time - currentCandle.time) < 65);
-                if (match && Math.abs(match.strike - lockedStrike) < 5) {
-                    return match.close;
-                }
-            }
-            return 0;
-        }
-
-        // Default Display (for the panel) - uses world strikeOffset
-        const relKey = strikeOffset === 0 ? 'ATM' : strikeOffset > 0 ? `ATM+${strikeOffset}` : `ATM${strikeOffset}`;
-        const atm = rollingData[relKey] || rollingData['ATM'];
-        if (!atm) return 0;
-        const data = type === 'CE' ? atm.ce : atm.pe;
-        const match = data.find((d: any) => Math.abs(d.time - currentCandle.time) < 65);
-        return match ? match.close : 0;
-    };
-
-    const currentCEPrice = getOptionPrice('CE') || 0;
-    const currentPEPrice = getOptionPrice('PE') || 0;
-
-    useEffect(() => {
-        if (currentCandle) {
-            setSpotPrice(currentCandle.close);
-            const d = new Date(currentCandle.time * 1000);
-            setCurrentTime(d.toTimeString().split(' ')[0].slice(0, 5));
-        }
-    }, [currentCandle]);
-
-    const handleBuyTrade = async (type: 'CE' | 'PE') => {
-        setIsExecuting(true);
-        try {
-            // 1. Identify current target strike price based on selection
-            const relKey = strikeOffset === 0 ? 'ATM' : strikeOffset > 0 ? `ATM+${strikeOffset}` : `ATM${strikeOffset}`;
-            const targetData = rollingData[relKey] || rollingData['ATM'];
-            const match = targetData?.[type.toLowerCase() as 'ce' | 'pe']?.find((d: any) => Math.abs(d.time - currentCandle.time) < 65);
-
-            // Robust strike identification
-            let entryStrike = match?.strike;
-            if (typeof entryStrike !== 'number') {
-                // Fallback: Calculate nearest strike based on spot
-                const step = selectedInst.symbol.includes('BANK') ? 100 : 50;
-                entryStrike = Math.round(spotPrice / step) * step;
-            }
-
-            // 2. Fetch the FULL historical day data for this specific strike if not cached
-            const strikeData = await fetchSpecificStrike(entryStrike);
-
-            // 3. Get the price from the newly loaded data
-            let price = getOptionPrice(type, entryStrike);
-
-            // If the state hasn't updated yet, try to find it in the just-returned data
-            if (price === 0 && strikeData) {
-                const leg = type === 'CE' ? strikeData.ce : strikeData.pe;
-                const matchPrice = leg.find((d: any) => Math.abs(d.time - currentCandle.time) < 65);
-                price = matchPrice ? matchPrice.close : 0;
-            }
-
-            if (price === 0) throw new Error("Could not find price for strike");
-
-            const newPos = {
-                id: Date.now(),
-                symbol: `${selectedInst.tradingSymbol} ${entryStrike} ${type}`,
-                type,
-                qty: selectedInst.symbol.includes('BANK') ? 15 : 50,
-                avg: price,
-                strike: entryStrike,
-                time: currentTime
-            };
-
-            setSimPositions(prev => [...prev, newPos]);
-            setTradeLogs(prev => [{
-                time: currentTime,
-                msg: `Executed: ${newPos.symbol} @ ${price.toFixed(2)}`,
-                color: 'text-blue-600'
-            }, ...prev]);
-        } catch (err) {
-            console.error("Trade execution failed", err);
-        } finally {
-            setIsExecuting(false);
-        }
-    };
-
-    const handleSquareOff = (id: number) => {
-        const pos = simPositions.find(p => p.id === id);
-        if (!pos) return;
-        const exitPrice = getOptionPrice(pos.type, pos.strike);
-        const pnl = (exitPrice - pos.avg) * pos.qty;
-
-        setSimPositions(prev => prev.filter(p => p.id !== id));
-        setTradeLogs(prev => [{
-            time: currentTime,
-            msg: `Sold ${pos.symbol} @ ${exitPrice.toFixed(2)} (P&L: ₹${pnl.toFixed(2)})`,
-            color: pnl >= 0 ? 'text-green-600' : 'text-rose-600'
-        }, ...prev]);
-    };
-
-    const calculateTotalPnL = () => {
-        return simPositions.reduce((acc, pos) => {
-            const currentPrice = getOptionPrice(pos.type, pos.strike);
-            return acc + (currentPrice - pos.avg) * pos.qty;
-        }, 0);
-    };
-
-    const handleStepForward = () => {
-        if (playbackIndex < chartData.length - 1) {
-            setPlaybackIndex(prev => prev + 1);
-        }
-    };
-
-    const handleStepBack = () => {
-        if (playbackIndex > 0) {
-            setPlaybackIndex(prev => prev - 1);
-        }
-    };
-
-    const handleFastForward = () => {
-        setPlaybackIndex(Math.min(chartData.length - 1, playbackIndex + 10));
-    };
-
-    const handleRewind = () => {
-        setPlaybackIndex(Math.max(0, playbackIndex - 10));
-    };
-
     return (
-        <div className="flex flex-col h-screen bg-[#f8fafc] text-slate-800 font-sans selection:bg-blue-100">
-            {/* Top Command Bar */}
-            <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20">
-                <div className="flex items-center gap-4">
-                    <Link href="/apps" className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors">
-                        <ArrowLeft size={18} />
-                    </Link>
-                    <div className="h-6 w-px bg-slate-200"></div>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded tracking-wider uppercase">Manual SIM</span>
-                            <h1 className="text-sm font-semibold text-slate-700 uppercase">
-                                {selectedInst.symbol} • {new Date(selectDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                            </h1>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Playback Controls */}
-                <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200/50">
-                    <button onClick={handleRewind} className="p-2 hover:bg-white hover:shadow-sm rounded-lg text-slate-500 transition-all"><Rewind size={16} /></button>
-                    <button onClick={handleStepBack} className="p-2 hover:bg-white hover:shadow-sm rounded-lg text-slate-500 transition-all"><ChevronLeft size={16} /></button>
-
-                    <div className="px-4 py-1.5 bg-white shadow-sm rounded-lg border border-slate-200 flex flex-col items-center justify-center min-w-[140px]">
-                        <span className="text-[10px] font-bold text-slate-400 leading-none mb-0.5 uppercase tracking-tighter">Current Candle</span>
-                        <span className="text-xs font-mono font-bold text-slate-700 leading-none">{currentTime || '--:--'}</span>
-                    </div>
-
-                    <button onClick={handleStepForward} className="p-2 hover:bg-white hover:shadow-sm rounded-lg text-slate-700 transition-all"><ChevronRightIcon size={16} /></button>
-                    <button onClick={handleFastForward} className="p-2 hover:bg-white hover:shadow-sm rounded-lg text-slate-700 transition-all"><FastForward size={16} /></button>
-
-                    <div className="w-px h-6 bg-slate-200 mx-1"></div>
-
-                    <button
-                        onClick={() => setIsPlaying(!isPlaying)}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm ${isPlaying ? 'bg-rose-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                    >
-                        {isPlaying ? <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div> : <Play size={12} fill="currentColor" />}
-                        {isPlaying ? 'PAUSE' : 'AUTO REPLAY'}
-                    </button>
-                </div>
-
-                <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-end">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Spot Price</span>
-                        <span className="text-sm font-mono font-bold text-slate-800">₹{spotPrice.toFixed(2)}</span>
-                    </div>
-                    <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors border border-slate-200">
-                        <Settings size={18} />
-                    </button>
-                </div>
-            </header>
-
-            <div className="flex flex-1 overflow-hidden">
-                {/* Left Panel: Configuration & Replay Log */}
-                <aside className="w-[280px] bg-white border-r border-slate-200 flex flex-col shrink-0">
-                    <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Simulator Config</h3>
-                        <Activity size={14} className="text-blue-500" />
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                        <section className="space-y-3">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">Instrument & Date</label>
-                            <div className="space-y-2">
-                                <input
-                                    type="date"
-                                    value={selectDate}
-                                    onChange={(e) => setSelectDate(e.target.value)}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none"
-                                />
-                                <select
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500/20"
-                                    value={selectedInst.securityId}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        if (val === '13') setSelectedInst({ exchange: 'NSE', segment: 'IDX_I', securityId: '13', symbol: 'NIFTY 50', tradingSymbol: 'NIFTY' });
-                                        if (val === '25') setSelectedInst({ exchange: 'NSE', segment: 'IDX_I', securityId: '25', symbol: 'BANKNIFTY', tradingSymbol: 'BANKNIFTY' });
-                                    }}
-                                >
-                                    <option value="13">NIFTY 50</option>
-                                    <option value="25">BANKNIFTY</option>
-                                </select>
-                            </div>
-                        </section>
-
-                        <section className="space-y-3">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">Simulator Stats</label>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                    <span className="text-[9px] font-bold text-slate-400 block mb-1">TOTAL P&L</span>
-                                    <span className={`text-sm font-bold ${calculateTotalPnL() >= 0 ? 'text-green-600' : 'text-rose-600'}`}>
-                                        ₹{calculateTotalPnL().toLocaleString('en-IN', { minimumFractionDigits: 1 })}
-                                    </span>
-                                </div>
-                                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                    <span className="text-[9px] font-bold text-slate-400 block mb-1">OPEN POS</span>
-                                    <span className="text-sm font-bold text-slate-600">{simPositions.length}</span>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase">Action Log</label>
-                                <span onClick={() => setTradeLogs([])} className="text-[9px] text-blue-500 font-bold hover:underline cursor-pointer">Clear</span>
-                            </div>
-                            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
-                                {tradeLogs.map((log, i) => (
-                                    <div key={i} className="flex gap-2 text-[10px] leading-tight group border-b border-slate-50 pb-1">
-                                        <span className="text-slate-400 font-mono italic shrink-0">{log.time}</span>
-                                        <span className={`font-medium ${log.color}`}>{log.msg}</span>
-                                    </div>
-                                ))}
-                                {tradeLogs.length === 0 && <span className="text-[10px] text-slate-300 italic">No activity yet...</span>}
-                            </div>
-                        </section>
-                    </div>
-
-                    <div className="p-4 bg-slate-50 border-t border-slate-200">
-                        <button className="w-full bg-white border border-slate-200 rounded-lg py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                            <Download size={14} />
-                            EXPORT RESULTS
-                        </button>
-                    </div>
-                </aside>
-
-                {/* Center Content: Full Page Chart */}
-                <main className="flex-1 flex flex-col min-h-0 bg-[#f8fafc] p-4 gap-4 overflow-hidden">
-                    <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div className="h-10 border-b border-slate-100 flex items-center justify-between px-4 shrink-0">
-                            <div className="flex items-center gap-2">
-                                <BarChart3 size={14} className="text-blue-500" />
-                                <span className="text-xs font-bold text-slate-600 uppercase tracking-tight">Index Spot Chart</span>
-                            </div>
-                            <div className="flex gap-1">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-600 text-white">1m</span>
-                            </div>
-                        </div>
-                        <div className="flex-1 min-h-0 relative bg-white overflow-hidden">
-                            {isLoading ? (
-                                <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
-                                    <div className="flex flex-col items-center gap-2">
-                                        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fetching Market History...</span>
-                                    </div>
-                                </div>
-                            ) : !isLoading && chartData.length === 0 ? (
-                                <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
-                                    <div className="text-center">
-                                        <AlertCircle className="mx-auto text-slate-300 mb-2" size={32} />
-                                        <h3 className="text-xs font-bold text-slate-600">No Data Available</h3>
-                                        <p className="text-[10px] text-slate-400 mt-1">Try another date or check your connection.</p>
-                                    </div>
-                                </div>
-                            ) : null}
-                            <D3Chart key={`${selectedInst.securityId}-${selectDate}`} data={visibleData} />
-                        </div>
-                    </div>
-                </main>
-
-                {/* Right Panel: Expired Options Execution & Positions */}
-                <aside className="w-[320px] bg-white border-l border-slate-200 flex flex-col shrink-0">
-                    <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                        <h3 className="text-xs font-bold text-slate-600 uppercase tracking-widest">Execution Panel</h3>
-                        <div className="flex gap-1">
-                            <div className={`w-2 h-2 rounded-full ${rollingData['ATM']?.ce?.length > 0 ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></div>
-                        </div>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                        {/* Option Buying Section */}
-                        <section className="space-y-4">
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-2">Select Strike Type</label>
-                                <div className="grid grid-cols-5 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-                                    {[-2, -1, 0, 1, 2].map((offset) => (
-                                        <button
-                                            key={offset}
-                                            onClick={() => setStrikeOffset(offset)}
-                                            className={`py-1.5 text-[9px] font-bold rounded-lg transition-all ${strikeOffset === offset
-                                                ? 'bg-blue-600 text-white shadow-sm'
-                                                : 'text-slate-500 hover:bg-white/50'
-                                                }`}
-                                        >
-                                            {offset === 0 ? 'ATM' : offset > 0 ? `OTM+${offset}` : `ITM${offset}`}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase">
-                                    Current Strike: <span className="text-blue-600">
-                                        {(() => {
-                                            const relKey = strikeOffset === 0 ? 'ATM' : strikeOffset > 0 ? `ATM+${strikeOffset}` : `ATM${strikeOffset}`;
-                                            const data = rollingData[relKey]?.ce;
-                                            const match = data?.find((d: any) => Math.abs(d.time - (currentCandle?.time || 0)) < 65);
-
-                                            if (match && !isNaN(match.strike) && match.strike > 0) {
-                                                return match.strike;
-                                            }
-
-                                            // Fallback calculation if data hasn't loaded yet
-                                            const step = selectedInst.symbol.includes('BANK') ? 100 : 50;
-                                            const atm = Math.round(spotPrice / step) * step;
-                                            return atm + (strikeOffset * step);
-                                        })()}
-                                    </span>
-                                </label>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3 relative">
-                                {isExecuting && (
-                                    <div className="absolute inset-0 bg-white/50 z-10 flex items-center justify-center backdrop-blur-[1px]">
-                                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                    </div>
-                                )}
-                                <button
-                                    onClick={() => handleBuyTrade('CE')}
-                                    disabled={isExecuting}
-                                    className="group relative bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-2xl p-4 transition-all disabled:opacity-50"
-                                >
-                                    <div className="flex justify-between items-start mb-2">
-                                        <span className="text-[10px] font-bold text-emerald-600 uppercase font-mono">
-                                            {strikeOffset === 0 ? 'ATM' : strikeOffset > 0 ? `OTM+${strikeOffset}` : `ITM${strikeOffset}`} CE
-                                        </span>
-                                        <ArrowUpRight size={14} className="text-emerald-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                                    </div>
-                                    <div className="text-lg font-mono font-black text-emerald-700">₹{currentCEPrice.toFixed(1)}</div>
-                                    <div className="text-[9px] font-bold text-emerald-500/70 mt-1 uppercase tracking-tighter">Buy Call</div>
-                                </button>
-
-                                <button
-                                    onClick={() => handleBuyTrade('PE')}
-                                    disabled={isExecuting}
-                                    className="group relative bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-2xl p-4 transition-all disabled:opacity-50"
-                                >
-                                    <div className="flex justify-between items-start mb-2">
-                                        <span className="text-[10px] font-bold text-rose-600 uppercase font-mono">
-                                            {strikeOffset === 0 ? 'ATM' : strikeOffset > 0 ? `ITM${strikeOffset}` : `OTM+${strikeOffset}`} PE
-                                        </span>
-                                        <ArrowDownRight size={14} className="text-rose-400 group-hover:translate-x-0.5 group-hover:translate-y-0.5 transition-transform" />
-                                    </div>
-                                    <div className="text-lg font-mono font-black text-rose-700">₹{currentPEPrice.toFixed(1)}</div>
-                                    <div className="text-[9px] font-bold text-rose-500/70 mt-1 uppercase tracking-tighter">Buy Put</div>
-                                </button>
-                            </div>
-                        </section>
-
-                        {/* Active Positions */}
-                        <section className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase">Active Positions ({simPositions.length})</label>
-                                {simPositions.length > 0 && <button onClick={() => simPositions.forEach(p => handleSquareOff(p.id))} className="text-[9px] font-bold text-rose-500 hover:underline">Square Off All</button>}
-                            </div>
-
-                            <div className="space-y-3">
-                                {simPositions.map((pos) => {
-                                    const currentPrice = getOptionPrice(pos.type, pos.strike);
-                                    const pnl = (currentPrice - pos.avg) * pos.qty;
-                                    return (
-                                        <div key={pos.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all">
-                                            <div className="flex justify-between items-start mb-3">
-                                                <div>
-                                                    <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-tight">{pos.symbol}</h4>
-                                                    <p className="text-[9px] font-bold text-slate-400 uppercase">{pos.time} • {pos.strike}</p>
-                                                </div>
-                                                <button onClick={() => handleSquareOff(pos.id)} className="p-1.5 hover:bg-rose-50 text-slate-300 hover:text-rose-500 rounded-lg transition-colors">
-                                                    <X size={14} />
-                                                </button>
-                                            </div>
-                                            <div className="flex justify-between items-end">
-                                                <div className="space-y-1">
-                                                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Entry @ ₹{pos.avg.toFixed(2)}</div>
-                                                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">LTP @ ₹{currentPrice.toFixed(2)}</div>
-                                                </div>
-                                                <div className={`text-sm font-mono font-black ${pnl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                    {pnl >= 0 ? '+' : ''}₹{pnl.toLocaleString('en-IN', { minimumFractionDigits: 1 })}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                {simPositions.length === 0 && (
-                                    <div className="border-2 border-dashed border-slate-100 rounded-2xl p-8 text-center">
-                                        <Activity size={24} className="mx-auto text-slate-200 mb-2" />
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase">No Active Trades</p>
-                                    </div>
-                                )}
-                            </div>
-                        </section>
-                    </div>
-                </aside>
+        <div className={`rounded-2xl border p-4 ${colors[color]}`}>
+            <div className="flex items-center justify-between mb-2">
+                <span className="text-[9px] font-bold uppercase tracking-widest opacity-60">{label}</span>
+                {Icon && <Icon size={14} className="opacity-40" />}
             </div>
+            <div className="text-xl font-black font-mono tracking-tight">{value}</div>
+            {sub && <div className="text-[10px] opacity-50 mt-1">{sub}</div>}
         </div>
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Page
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function BacktestPage() {
+    const { brokerCredentials } = useTradingStore();
+
+    // Date range: default last 2 months
+    const today = new Date();
+    const twoMonthsAgo = new Date();
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
+    const [fromDate, setFromDate] = useState(twoMonthsAgo.toISOString().split('T')[0]);
+    const [toDate, setToDate] = useState(today.toISOString().split('T')[0]);
+
+    const [status, setStatus] = useState<'idle' | 'fetching' | 'running' | 'done' | 'error'>('idle');
+    const [progress, setProgress] = useState(0);
+    const [errorMsg, setErrorMsg] = useState('');
+
+    const [candles, setCandles] = useState<any[]>([]);
+    const [result, setResult] = useState<BacktestResult | null>(null);
+    const [activeMonth, setActiveMonth] = useState<string | null>(null);
+    const [expandTrades, setExpandTrades] = useState(false);
+
+    // Convert result signals to AlgoRealtimeChart-compatible signal format
+    const chartSignals = result?.signalCandles.map(sc => ({
+        type: sc.trade.type === 'LONG' ? 'BUY' as const : 'SELL' as const,
+        price: sc.trade.entrySpot,
+        symbol: 'BANKNIFTY',
+        reason: sc.trade.signal,
+        strength: 1,
+        timestamp: (result.allCandles[sc.index]?.time ?? 0) * 1000,
+        targetPoints: 50,
+        slPoints: 30,
+    })) ?? [];
+
+    // ── Fetch data in weekly chunks (Dhan 1m limit) ───────────────────────
+    const fetchAndRun = useCallback(async () => {
+        if (!brokerCredentials) { setErrorMsg('Connect your broker first.'); setStatus('error'); return; }
+        setStatus('fetching');
+        setProgress(0);
+        setResult(null);
+        setErrorMsg('');
+
+        try {
+            const from = new Date(fromDate);
+            const to = new Date(toDate);
+            const allCandles: any[] = [];
+
+            // Split into weekly chunks
+            const chunks: { f: string; t: string }[] = [];
+            const cur = new Date(from);
+            while (cur < to) {
+                const chunkEnd = new Date(cur);
+                chunkEnd.setDate(chunkEnd.getDate() + 6);
+                if (chunkEnd > to) chunkEnd.setTime(to.getTime());
+                chunks.push({
+                    f: cur.toISOString().split('T')[0],
+                    t: chunkEnd.toISOString().split('T')[0]
+                });
+                cur.setDate(cur.getDate() + 7);
+            }
+
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                setProgress(Math.round((i / chunks.length) * 80));
+
+                const res = await fetch('/api/dhan/intraday', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        clientId: brokerCredentials.clientId,
+                        accessToken: brokerCredentials.accessToken,
+                        securityId: '25', // BANKNIFTY
+                        exchangeSegment: 'IDX_I',
+                        instrument: 'INDEX',
+                        interval: '1',
+                        fromDate: chunk.f,
+                        toDate: chunk.t
+                    })
+                });
+                const json = await res.json();
+                if (json.success && json.data) {
+                    const formatted = Array.isArray(json.data) ? json.data : (json.data.data || []);
+                    formatted.forEach((c: any) => {
+                        const ts = Number(c.timestamp || c.start_Time || 0);
+                        const time = ts > 1e10 ? ts / 1000 : ts;
+                        if (!time || time < 1000) return;
+                        const open = Number(c.open);
+                        const high = Number(c.high);
+                        const low = Number(c.low);
+                        const close = Number(c.close);
+                        if (isNaN(open) || open <= 0) return;
+                        allCandles.push({ time, open, high, low, close, volume: Number(c.volume) || 0 });
+                    });
+                }
+
+                // Rate limit: 1 req / 3s
+                if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 3200));
+            }
+
+            if (allCandles.length === 0) {
+                setErrorMsg('No candle data returned. Check your Dhan credentials and date range.');
+                setStatus('error');
+                return;
+            }
+
+            // Dedupe and sort
+            const seen = new Set<number>();
+            const deduped = allCandles
+                .filter(c => { if (seen.has(c.time)) return false; seen.add(c.time); return true; })
+                .sort((a, b) => a.time - b.time);
+
+            setCandles(deduped);
+            setProgress(85);
+            setStatus('running');
+
+            // Run backtest in next tick so React can update UI
+            await new Promise(r => setTimeout(r, 50));
+            const bt = runBacktest(deduped);
+            setResult(bt);
+            setProgress(100);
+            setStatus('done');
+
+            if (bt.monthResults.length > 0) {
+                setActiveMonth(bt.monthResults[bt.monthResults.length - 1].month);
+            }
+        } catch (err: any) {
+            setErrorMsg(err.message || 'Backtest failed.');
+            setStatus('error');
+        }
+    }, [brokerCredentials, fromDate, toDate]);
+
+    // ── Trades for active month ────────────────────────────────────────────
+    const activeTrades: BacktestTrade[] = result
+        ? (activeMonth ? result.trades.filter(t => t.date.startsWith(activeMonth)) : result.trades)
+        : [];
+
+    const activeMonthResult = result?.monthResults.find(m => m.month === activeMonth);
+
+    // ── Equity curve data ─────────────────────────────────────────────────
+    const equityCurve = result?.trades.reduce((acc, t) => {
+        const prev = acc[acc.length - 1] ?? 0;
+        acc.push(prev + t.netPnl);
+        return acc;
+    }, [] as number[]) ?? [];
+
+    const peakEquity = Math.max(0, ...equityCurve);
+    const finalEquity = equityCurve[equityCurve.length - 1] ?? 0;
+
+    return (
+        <div className="min-h-screen bg-[#0a0c10] text-slate-200 font-sans">
+            {/* Ambient */}
+            <div className="fixed inset-0 pointer-events-none overflow-hidden">
+                <div className="absolute top-[-10%] right-[-5%] w-[35%] h-[35%] bg-violet-600/10 blur-[120px] rounded-full" />
+                <div className="absolute bottom-[-5%] left-[-5%] w-[30%] h-[30%] bg-blue-600/8 blur-[100px] rounded-full" />
+            </div>
+
+            {/* Header */}
+            <header className="sticky top-0 z-40 backdrop-blur-md bg-[#0a0c10]/70 border-b border-white/5">
+                <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <Link href="/apps" className="p-2 hover:bg-white/5 rounded-xl transition-colors text-slate-400 hover:text-white">
+                            <ArrowLeft size={18} />
+                        </Link>
+                        <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-violet-500/10 rounded-lg">
+                                <BarChart3 size={16} className="text-violet-400" />
+                            </div>
+                            <div>
+                                <h1 className="text-sm font-bold text-white leading-none">PDLS-VIX Backtester</h1>
+                                <p className="text-[10px] text-slate-500 mt-0.5">BankNifty · 1-Minute · Index-Point P&L</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                            <Calendar size={12} className="text-slate-500" />
+                            <input
+                                type="date"
+                                value={fromDate}
+                                onChange={e => setFromDate(e.target.value)}
+                                className="bg-transparent text-[11px] font-mono text-slate-300 outline-none w-28"
+                            />
+                            <span className="text-slate-600 text-xs">→</span>
+                            <input
+                                type="date"
+                                value={toDate}
+                                onChange={e => setToDate(e.target.value)}
+                                className="bg-transparent text-[11px] font-mono text-slate-300 outline-none w-28"
+                            />
+                        </div>
+                        <button
+                            onClick={fetchAndRun}
+                            disabled={status === 'fetching' || status === 'running'}
+                            className="h-9 px-5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[11px] font-bold uppercase tracking-wider rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-violet-500/20"
+                        >
+                            {(status === 'fetching' || status === 'running')
+                                ? <><RefreshCw size={13} className="animate-spin" /> {status === 'fetching' ? 'Fetching...' : 'Running...'}</>
+                                : <><Play size={13} fill="currentColor" /> Run Backtest</>
+                            }
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <main className="max-w-7xl mx-auto px-6 py-6 pb-24 space-y-6">
+
+                {/* ── Progress / Error / Idle state ────────────────────────── */}
+                {status === 'idle' && (
+                    <div className="flex flex-col items-center justify-center py-20 gap-4">
+                        <div className="p-5 bg-violet-500/10 rounded-3xl">
+                            <BarChart3 size={40} className="text-violet-400" />
+                        </div>
+                        <h2 className="text-white font-bold text-lg">Ready to Backtest</h2>
+                        <p className="text-slate-500 text-sm text-center max-w-md">
+                            Select a date range (up to 2 months) and click "Run Backtest".<br />
+                            The engine fetches real 1-min BANKNIFTY data from Dhan and runs the full PDLS-VIX strategy logic.
+                        </p>
+                        <div className="flex gap-3 mt-2">
+                            {['9:30–11:30 window', 'PDH/PDL sweeps', '50pt TP · 30pt SL', '2 lots fixed'].map(t => (
+                                <span key={t} className="text-[10px] font-bold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-3 py-1 rounded-full">{t}</span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {(status === 'fetching' || status === 'running') && (
+                    <div className="flex flex-col items-center justify-center py-16 gap-5">
+                        <div className="relative">
+                            <div className="w-16 h-16 rounded-full border-2 border-violet-500/20 flex items-center justify-center">
+                                <BarChart3 size={28} className="text-violet-400 animate-pulse" />
+                            </div>
+                            <svg className="absolute inset-0 -rotate-90" viewBox="0 0 64 64">
+                                <circle cx="32" cy="32" r="30" fill="none" stroke="#7c3aed" strokeWidth="2"
+                                    strokeDasharray={`${progress * 1.885} 188.5`} strokeLinecap="round" />
+                            </svg>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-white font-bold">
+                                {status === 'fetching' ? `Fetching historical data… ${progress}%` : 'Running PDLS-VIX strategy…'}
+                            </div>
+                            <p className="text-slate-500 text-xs mt-1">
+                                {status === 'fetching' ? 'Downloading 1-min BANKNIFTY candles from Dhan API' : 'Simulating entries, exits, and daily risk state'}
+                            </p>
+                        </div>
+                        <div className="w-64 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                            <div className="h-full bg-violet-600 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                        </div>
+                    </div>
+                )}
+
+                {status === 'error' && (
+                    <div className="flex items-center gap-4 p-5 bg-rose-500/10 border border-rose-500/20 rounded-2xl">
+                        <AlertCircle size={20} className="text-rose-400 flex-shrink-0" />
+                        <div>
+                            <div className="text-rose-400 font-bold text-sm">Backtest Failed</div>
+                            <div className="text-rose-400/70 text-xs mt-0.5">{errorMsg}</div>
+                        </div>
+                        <button onClick={fetchAndRun} className="ml-auto text-xs text-rose-400 hover:text-white transition-colors">Retry →</button>
+                    </div>
+                )}
+
+                {/* ── Results ─────────────────────────────────────────────── */}
+                {status === 'done' && result && (
+                    <>
+                        {/* Top KPI row */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+                            <StatCard label="Net P&L" value={fmtPnl(result.netPnl)} sub={`${result.totalTrades} trades`}
+                                color={result.netPnl >= 0 ? 'emerald' : 'rose'} icon={result.netPnl >= 0 ? TrendingUp : TrendingDown} />
+                            <StatCard label="Win Rate" value={`${result.winRate}%`} sub={`${result.wins}W / ${result.losses}L`}
+                                color={result.winRate >= 55 ? 'emerald' : result.winRate >= 45 ? 'amber' : 'rose'} icon={Target} />
+                            <StatCard label="Profit Factor" value={result.profitFactor >= 999 ? '∞' : String(result.profitFactor)}
+                                sub="Gross Win / Gross Loss" color={result.profitFactor >= 1.5 ? 'emerald' : result.profitFactor >= 1 ? 'amber' : 'rose'} icon={BarChart3} />
+                            <StatCard label="Max Drawdown" value={fmtPnl(-result.maxDrawdown)} sub="Peak to trough"
+                                color="rose" icon={ShieldAlert} />
+                            <StatCard label="Avg Win" value={fmtPnl(result.avgWin)} sub="Per winning trade"
+                                color="emerald" icon={TrendingUp} />
+                            <StatCard label="Avg Loss" value={fmtPnl(result.avgLoss)} sub="Per losing trade"
+                                color="rose" icon={TrendingDown} />
+                            <StatCard label="Max Consec. Loss" value={String(result.consecutiveLosses)} sub="In a row"
+                                color={result.consecutiveLosses >= 3 ? 'rose' : 'amber'} icon={Activity} />
+                            <StatCard label="Brokerage" value={fmtPnl(result.totalBrokerage)} sub="Total charges"
+                                color="slate" icon={Layers} />
+                        </div>
+
+                        {/* Chart */}
+                        <div className="flex flex-col" style={{ height: 520 }}>
+                            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">BANKNIFTY · 1 min · {candles.length.toLocaleString()} candles</span>
+                                    <span className="text-[10px] font-bold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full">
+                                        {result.trades.length} signals marked
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <AlgoRealtimeChart
+                                    data={candles}
+                                    signals={chartSignals}
+                                    zones={[]}
+                                    symbol="BANKNIFTY"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Equity Curve mini bar chart */}
+                        <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-5">
+                            <div className="flex items-center justify-between mb-4">
+                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Equity Curve</span>
+                                <span className={`text-sm font-black font-mono ${finalEquity >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {fmtPnl(finalEquity)}
+                                </span>
+                            </div>
+                            <div className="h-24 flex items-end gap-0.5">
+                                {equityCurve.map((v, i) => {
+                                    const max = Math.max(Math.abs(peakEquity), Math.abs(Math.min(...equityCurve)));
+                                    const pct = max > 0 ? Math.abs(v) / max : 0;
+                                    const h = Math.max(2, pct * 96);
+                                    return (
+                                        <div key={i} className="flex-1 flex flex-col justify-end" title={`Trade ${i + 1}: ${fmtPnl(v)}`}>
+                                            <div
+                                                className={`rounded-sm transition-all ${v >= 0 ? 'bg-emerald-500/70' : 'bg-rose-500/70'}`}
+                                                style={{ height: h }}
+                                            />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Monthly grid */}
+                        <div>
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="h-px flex-1 bg-white/5" />
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Monthly Performance</span>
+                                <div className="h-px flex-1 bg-white/5" />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                {result.monthResults.map(m => (
+                                    <button
+                                        key={m.month}
+                                        onClick={() => setActiveMonth(activeMonth === m.month ? null : m.month)}
+                                        className={`text-left rounded-2xl border p-4 transition-all hover:bg-white/5 ${activeMonth === m.month
+                                                ? 'border-violet-500/40 bg-violet-500/5'
+                                                : 'border-white/5 bg-white/[0.02]'
+                                            }`}
+                                    >
+                                        <div className="flex items-center justify-between mb-3">
+                                            <span className="text-xs font-bold text-white">{m.label}</span>
+                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${m.winRate >= 60 ? 'bg-emerald-500/15 text-emerald-400' :
+                                                    m.winRate >= 45 ? 'bg-amber-500/15 text-amber-400' :
+                                                        'bg-rose-500/15 text-rose-400'
+                                                }`}>{m.winRate}% WR</span>
+                                        </div>
+                                        <div className={`text-2xl font-black font-mono mb-1 ${m.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                            {fmtPnl(m.netPnl)}
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 mt-3">
+                                            {[
+                                                { l: 'Trades', v: String(m.trades) },
+                                                { l: 'Wins', v: String(m.wins), c: 'text-emerald-400' },
+                                                { l: 'Loss', v: String(m.losses), c: 'text-rose-400' },
+                                            ].map(x => (
+                                                <div key={x.l} className="bg-white/5 rounded-lg p-1.5 text-center">
+                                                    <div className={`text-xs font-bold ${x.c ?? 'text-white'}`}>{x.v}</div>
+                                                    <div className="text-[8px] text-slate-600">{x.l}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {/* Day breakdown bar */}
+                                        <div className="mt-3 flex items-center gap-1">
+                                            <div className="h-1 rounded-full bg-emerald-500/60 transition-all" style={{ flex: m.profitableDays }} />
+                                            <div className="h-1 rounded-full bg-rose-500/40 transition-all" style={{ flex: m.totalDays - m.profitableDays }} />
+                                        </div>
+                                        <div className="text-[8px] text-slate-600 mt-1">{m.profitableDays}/{m.totalDays} profitable days</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Trade Log */}
+                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-hidden">
+                            <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Clock size={14} className="text-slate-500" />
+                                    <span className="text-sm font-bold text-white">
+                                        Trade Log {activeMonth ? `— ${result.monthResults.find(m => m.month === activeMonth)?.label}` : '— All Trades'}
+                                    </span>
+                                    <span className="text-[10px] bg-white/5 text-slate-400 px-2 py-0.5 rounded-full">{activeTrades.length} trades</span>
+                                </div>
+                                <button
+                                    onClick={() => setExpandTrades(!expandTrades)}
+                                    className="text-slate-500 hover:text-white transition-colors p-1"
+                                >
+                                    {expandTrades ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </button>
+                            </div>
+
+                            {/* Always show last 10 visible trades, toggle to expand */}
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-[11px]">
+                                    <thead>
+                                        <tr className="border-b border-white/5">
+                                            {['Date', 'Entry', 'Exit', 'Type', 'Signal', 'Entry Spot', 'Exit Spot', 'Points', 'Net P&L', 'Exit Reason'].map(h => (
+                                                <th key={h} className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-600 uppercase tracking-widest whitespace-nowrap">
+                                                    {h}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(expandTrades ? activeTrades : activeTrades.slice(0, 20)).map(t => (
+                                            <tr key={t.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                                                <td className="px-4 py-2.5 font-mono text-slate-400">{t.date.slice(5)}</td>
+                                                <td className="px-4 py-2.5 font-mono text-slate-300">{t.entryTime}</td>
+                                                <td className="px-4 py-2.5 font-mono text-slate-300">{t.exitTime}</td>
+                                                <td className="px-4 py-2.5">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${t.type === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>
+                                                        {t.type === 'LONG' ? 'CE BUY' : 'PE BUY'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-2.5 text-slate-500 max-w-[160px] truncate" title={t.signal}>{t.signal}</td>
+                                                <td className="px-4 py-2.5 font-mono text-slate-300">{fmt(t.entrySpot)}</td>
+                                                <td className="px-4 py-2.5 font-mono text-slate-300">{fmt(t.exitSpot)}</td>
+                                                <td className={`px-4 py-2.5 font-mono font-bold ${t.points >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {fmtPts(t.points)}
+                                                </td>
+                                                <td className={`px-4 py-2.5 font-mono font-bold ${t.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {fmtPnl(t.netPnl)}
+                                                </td>
+                                                <td className="px-4 py-2.5">
+                                                    <span className={`text-[9px] font-bold ${t.exitReason === 'TARGET' ? 'text-emerald-400' :
+                                                            t.exitReason === 'SL' ? 'text-rose-400' :
+                                                                t.exitReason === 'EODCLOSE' ? 'text-amber-400' :
+                                                                    'text-slate-500'
+                                                        }`}>{t.exitReason}</span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                {activeTrades.length > 20 && !expandTrades && (
+                                    <div className="px-4 py-3 text-center">
+                                        <button onClick={() => setExpandTrades(true)} className="text-[10px] text-slate-500 hover:text-white transition-colors">
+                                            Show all {activeTrades.length} trades ↓
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </>
+                )}
+            </main>
+        </div>
+    );
+}

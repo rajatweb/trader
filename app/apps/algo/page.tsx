@@ -462,6 +462,16 @@ export default function AlgoDashboard() {
                             >
                                 SL Hunt
                             </button>
+                            <button
+                                onClick={() => { if (!isRunning) setActiveStrategy('SUPERTREND'); }}
+                                title={isRunning ? 'Stop algo before switching' : 'SuperTrend (7,3) Option Buying'}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all ${activeStrategy === 'SUPERTREND'
+                                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/30'
+                                    : 'text-slate-400 hover:text-slate-200'
+                                    } ${isRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                            >
+                                SuperTrend
+                            </button>
                         </div>
 
                         {/* Live Capital Meter */}
@@ -580,9 +590,9 @@ export default function AlgoDashboard() {
                         },
                         {
                             label: 'Signal Engine',
-                            value: activeStrategy === 'PDLS_VIX' ? 'PDLS-VIX' : 'SL-Hunt',
+                            value: activeStrategy === 'PDLS_VIX' ? 'PDLS-VIX' : activeStrategy === 'SUPERTREND' ? 'SuperTrend' : 'SL-Hunt',
                             sub: lastSignal ? `Last: ${lastSignal.reason.slice(0, 32)}…` : 'No signal yet',
-                            color: activeStrategy === 'PDLS_VIX' ? 'violet' : 'blue',
+                            color: activeStrategy === 'PDLS_VIX' ? 'violet' : activeStrategy === 'SUPERTREND' ? 'emerald' : 'blue',
                             dot: isRunning,
                         },
                         {
@@ -682,6 +692,7 @@ export default function AlgoDashboard() {
                                 signals={signals}
                                 zones={zones}
                                 symbol={selectedIndex}
+                                activeStrategy={activeStrategy}
                             />
                         </div>
                     </div>

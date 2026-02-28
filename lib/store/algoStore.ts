@@ -21,7 +21,7 @@ interface AlgoPosition {
 
 interface AlgoStore {
     isRunning: boolean;
-    activeStrategy: 'SL_HUNT' | 'PDLS_VIX';
+    activeStrategy: 'SL_HUNT' | 'PDLS_VIX' | 'SUPERTREND';
     liveVix: number;
     liveVix5dAvg: number;
     config: AlgoConfig;
@@ -38,7 +38,7 @@ interface AlgoStore {
 
     // Actions
     setRunning: (running: boolean) => void;
-    setActiveStrategy: (strategy: 'SL_HUNT' | 'PDLS_VIX') => void;
+    setActiveStrategy: (strategy: 'SL_HUNT' | 'PDLS_VIX' | 'SUPERTREND') => void;
     setLiveVix: (vix: number) => void;
     updateConfig: (config: Partial<AlgoConfig>) => void;
     addSignal: (signal: AlgoSignal) => void;
@@ -54,7 +54,7 @@ export const useAlgoStore = create<AlgoStore>()(
     persist(
         (set, get) => ({
             isRunning: false,
-            activeStrategy: 'PDLS_VIX' as 'SL_HUNT' | 'PDLS_VIX',
+            activeStrategy: 'PDLS_VIX' as 'SL_HUNT' | 'PDLS_VIX' | 'SUPERTREND',
             liveVix: 14,
             liveVix5dAvg: 14,
             capitalUsed: 0,
