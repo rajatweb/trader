@@ -196,55 +196,65 @@ export class TradingStrategy {
         let slPoints = 0;
         let reasoning = '';
 
-        const orbBreakoutMargin = indexType === 'BANKNIFTY' ? 10 : 5;
+        // SETUPS: PURE PRICE ACTION & LIQUIDITY SWEEPS
 
-        // SETUPS
+        // 1. Initial Balance / ORB Fakeout (Trap) LONG
+        // Price swept below the ORB Low but immediately closed back above it, trapping early shorters.
+        if (current.low < features.orbLow && current.close > features.orbLow && current.close > current.open) {
+            algoDecision = 'LONG';
+            slPoints = Math.max(features.atr * 1.2, current.close - current.low + 5);
+            reasoning = 'Liquidity Sweep (Trap Shorts at Lows)';
+        }
 
-        // 1. Opening Range Breakout (ORB) LONG
-        if (current.close > (features.orbHigh + orbBreakoutMargin) && prev.close <= features.orbHigh) {
-            // Must have broken out on decent volume confirming momentum
-            if ((current.volume || 1) > (current.avgVol || 1)) {
-                // Strong bullish confirmation candle closing near high
-                if (current.close > current.open && ((current.high - current.close) / (current.high - current.low + 0.001) < 0.3)) {
-                    algoDecision = 'LONG';
-                    // SL safely tucked back inside the ORB or a tight technical low constraint
-                    slPoints = Math.max(features.atr * 1.2, current.close - current.low + 10);
-                    reasoning = 'Bullish ORB Breakout (High Vol)';
-                }
+        // 2. Initial Balance / ORB Fakeout (Trap) SHORT
+        // Price swept above the ORB High but immediately closed back below it, trapping breakout buyers.
+        if (algoDecision === 'NONE' && current.high > features.orbHigh && current.close < features.orbHigh && current.close < current.open) {
+            algoDecision = 'SHORT';
+            slPoints = Math.max(features.atr * 1.2, current.high - current.close + 5);
+            reasoning = 'Liquidity Sweep (Trap Longs at Highs)';
+        }
+
+        // 3. Volume Exhaustion / Absorption Pinbar (LONG)
+        // Massive volume with a giant lower wick rejecting the lows
+        if (algoDecision === 'NONE' && (current.volume || 0) > (current.avgVol * 1.5)) {
+            const totalRange = current.high - current.low + 0.01;
+            const lowerWick = Math.min(current.open, current.close) - current.low;
+            if (lowerWick / totalRange > 0.6) {
+                algoDecision = 'LONG';
+                slPoints = Math.max(features.atr * 1.5, current.close - current.low + 5);
+                reasoning = 'Volume Absorption (Institutional Buying)';
             }
         }
 
-        // 2. Opening Range Breakdown (ORB) SHORT
-        if (current.close < (features.orbLow - orbBreakoutMargin) && prev.close >= features.orbLow) {
-            if ((current.volume || 1) > (current.avgVol || 1)) {
-                if (current.close < current.open && ((current.close - current.low) / (current.high - current.low + 0.001) < 0.3)) {
-                    algoDecision = 'SHORT';
-                    slPoints = Math.max(features.atr * 1.2, current.high - current.close + 10);
-                    reasoning = 'Bearish ORB Breakout (High Vol)';
-                }
+        // 4. Volume Exhaustion / Absorption Pinbar (SHORT)
+        // Massive volume with a giant upper wick rejecting the highs
+        if (algoDecision === 'NONE' && (current.volume || 0) > (current.avgVol * 1.5)) {
+            const totalRange = current.high - current.low + 0.01;
+            const upperWick = current.high - Math.max(current.open, current.close);
+            if (upperWick / totalRange > 0.6) {
+                algoDecision = 'SHORT';
+                slPoints = Math.max(features.atr * 1.5, current.high - current.close + 5);
+                reasoning = 'Volume Climax (Institutional Selling)';
             }
         }
 
-        // 3. VWAP Bounce LONG (If we are trending above ORB, and we dip back down to VWAP)
-        if (algoDecision === 'NONE' && current.close > features.orbHigh) {
-            if (current.low <= features.vwap && current.close > features.vwap) {
-                // Green rejection candle off VWAP
-                if (current.close > current.open) {
-                    algoDecision = 'LONG';
-                    slPoints = features.atr * 1.2;
-                    reasoning = 'Bullish VWAP Trailing Rejection';
-                }
+        // 5. ADR Mean Reversion Overbought (SHORT)
+        if (algoDecision === 'NONE' && current.adr && current.high >= current.adr.adr2h) {
+            // Exhaustion pinbar / red candle closing below ADR zone
+            if (current.close < current.open && current.close < current.adr.adr2h) {
+                algoDecision = 'SHORT';
+                slPoints = Math.max(features.atr * 2.0, current.high - current.close + 10);
+                reasoning = 'ADR 2 High Exhaustion (Reversal)';
             }
         }
 
-        // 4. VWAP Rejection SHORT (If we are trending below ORB, and we pop up to VWAP)
-        if (algoDecision === 'NONE' && current.close < features.orbLow) {
-            if (current.high >= features.vwap && current.close < features.vwap) {
-                if (current.close < current.open) {
-                    algoDecision = 'SHORT';
-                    slPoints = features.atr * 1.2;
-                    reasoning = 'Bearish VWAP Trailing Rejection';
-                }
+        // 6. ADR Mean Reversion Oversold (LONG)
+        if (algoDecision === 'NONE' && current.adr && current.low <= current.adr.adr2l) {
+            // Exhaustion pinbar / green candle closing above ADR zone
+            if (current.close > current.open && current.close > current.adr.adr2l) {
+                algoDecision = 'LONG';
+                slPoints = Math.max(features.atr * 2.0, current.close - current.low + 10);
+                reasoning = 'ADR 2 Low Exhaustion (Reversal)';
             }
         }
 
