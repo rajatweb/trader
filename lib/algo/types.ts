@@ -1,4 +1,4 @@
-import { MarketSnapshot } from './ml';
+import { MarketSnapshot } from './strategy';
 
 export interface AlgoSignal {
     type: 'BUY' | 'SELL' | 'NONE';

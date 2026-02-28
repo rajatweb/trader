@@ -5,9 +5,8 @@
  */
 
 import { calculateADRx2, CandleWithAdr } from './adrIndicator';
-import { TradingStrategy } from './strategy';
+import { TradingStrategy, MarketSnapshot } from './strategy';
 import { TradingPlan } from './types';
-import { AlphaStrategist, MarketSnapshot } from './ml';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -93,8 +92,7 @@ export interface BacktestResult {
     consecutiveLosses: number;
     allCandles: Candle[];
     signalCandles: { index: number; trade: BacktestTrade }[];
-    trainedModelJSON?: string; // Exported ML brain string
-    trainingLogs?: string[];    // AI Thinking logs
+    trainingLogs?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,12 +121,6 @@ export async function runBacktest(
     const monthResults: MonthResult[] = [];
     const signalCandles: { index: number; trade: BacktestTrade }[] = [];
 
-    const strategist = new AlphaStrategist();
-
-    if (opts.preTrainedModel) {
-        strategist.importJSON(opts.preTrainedModel);
-    }
-
     // ── Indicator & Backtest Logic ───────────────────────────────────────────
     let activePos: {
         type: 'LONG' | 'SHORT', entryPrice: number, entryIdx: number,
@@ -138,12 +130,9 @@ export async function runBacktest(
     let currentPlan: TradingPlan | null = null;
     let currentDayStr = '';
     let tradesToday = 0;
-    let lastExitIdx = -99; // Track index of last exit for cool-down
-    let lastDiscoveryIdx = -99; // Track index of last discovery for cooldown
-
+    let lastExitIdx = -99;
     // Warmup Day Tracking
     let uniqueDaysPassed = 0;
-    const requiredTrainDays = opts.trainDays || 0; // Days dedicated entirely to model training with no Real P&L
 
     // Day tracking
     let dayPnl = 0;
@@ -213,13 +202,7 @@ export async function runBacktest(
             tradesToday = 0;
             uniqueDaysPassed++;
 
-            // Batch Finalize Training if we just exited the warmup phase
-            if (requiredTrainDays > 0 && uniqueDaysPassed === requiredTrainDays + 1) {
-                if (opts.onProgress) opts.onProgress('TRAINING', 0);
-                await strategist.train((p) => {
-                    if (opts.onProgress) opts.onProgress('TRAINING', p);
-                });
-            }
+            uniqueDaysPassed++;
 
             // Run pre-market analysis
             currentPlan = TradingStrategy.runPreMarketAnalysis(allCandles.slice(0, i));
@@ -228,6 +211,27 @@ export async function runBacktest(
         // ── Active Position Management ───────────────────────────────
         if (activePos) {
             const isLong = activePos.type === 'LONG';
+
+            // Dynamic Trailing Stop Loss logic for 5-minute trends
+            if (isLong) {
+                const favorableMove = currentCandle.close - activePos.entryPrice;
+                if (favorableMove > activePos.slPoints * 0.75) {
+                    // Lock in break-even plus a bit, or trail aggressively
+                    const newSlPoints = -favorableMove + (activePos.slPoints * 0.5); // Tighten SL as it moves
+                    if (newSlPoints < activePos.slPoints) {
+                        activePos.slPoints = newSlPoints;
+                    }
+                }
+            } else {
+                const favorableMove = activePos.entryPrice - currentCandle.close;
+                if (favorableMove > activePos.slPoints * 0.75) {
+                    const newSlPoints = -favorableMove + (activePos.slPoints * 0.5);
+                    if (newSlPoints < activePos.slPoints) {
+                        activePos.slPoints = newSlPoints;
+                    }
+                }
+            }
+
             const targetPrice = isLong ? activePos.entryPrice + activePos.targetPoints : activePos.entryPrice - activePos.targetPoints;
             const slPrice = isLong ? activePos.entryPrice - activePos.slPoints : activePos.entryPrice + activePos.slPoints;
 
@@ -282,74 +286,25 @@ export async function runBacktest(
             const hitMaxProfit = dayNetPnlPts >= currentPlan.maxDailyProfitPoints;
 
             // Strategy only considers trades after 9:15 and if daily limits are not hit
-            const coolDownOk = (i - lastExitIdx) >= 5; // 5 minute gap between trades
+            const coolDownOk = (i - lastExitIdx) >= 1; // 1 candle gap (5 minutes) between trades
 
             if (timeStr >= '09:16' && timeStr <= '15:00' && !hitMaxLoss && !hitMaxProfit && coolDownOk) {
-                const isWarmupPhase = uniqueDaysPassed <= requiredTrainDays && requiredTrainDays > 0;
+                // LIVE BACKTEST MODE: Let the AI decide and set its own SL/Target
+                const signal = TradingStrategy.checkAiSignal(allCandles, i, opts.indexType || 'NIFTY', tradesToday, currentPlan || undefined);
 
-                if (isWarmupPhase) {
-                    const discoveryCooldown = 15; // Wait 15 mins between learnings
-                    if (i - lastDiscoveryIdx < discoveryCooldown) continue;
-
-                    // DISCOVERY MODE: Look ahead 60 candles to see if this was a "Golden Entry"
-                    const lookahead = Math.min(allCandles.length, i + 60);
-                    const currentPrice = currentCandle.close;
-                    let maxFavorableLong = 0;
-                    let maxAdverseLong = 0;
-                    let maxFavorableShort = 0;
-                    let maxAdverseShort = 0;
-
-                    for (let j = i + 1; j < lookahead; j++) {
-                        const fut = allCandles[j];
-                        maxFavorableLong = Math.max(maxFavorableLong, fut.high - currentPrice);
-                        maxAdverseLong = Math.max(maxAdverseLong, currentPrice - fut.low);
-                        maxFavorableShort = Math.max(maxFavorableShort, currentPrice - fut.low);
-                        maxAdverseShort = Math.max(maxAdverseShort, fut.high - currentPrice);
-                    }
-
-                    const isBNF = opts.indexType === 'BANKNIFTY';
-                    const targetThresh = isBNF ? 100 : 40;
-                    const slThresh = isBNF ? 30 : 15;
-
-                    const snaps = TradingStrategy.buildSnapshotWindow(allCandles, i, 3, opts.indexType || 'NIFTY');
-
-                    if (snaps.length > 0) {
-                        // If LONG moved big before targetThresh move
-                        if (maxFavorableLong > targetThresh && maxAdverseLong < slThresh) {
-                            strategist.learn(snaps, { type: 'LONG', pnl: maxFavorableLong, maxFavorable: maxFavorableLong, maxAdverse: maxAdverseLong });
-                            lastDiscoveryIdx = i;
-                        } else if (maxAdverseLong > targetThresh / 2 && maxFavorableLong < targetThresh / 4) {
-                            strategist.learn(snaps, { type: 'LONG', pnl: -1, maxFavorable: maxFavorableLong, maxAdverse: maxAdverseLong });
-                            lastDiscoveryIdx = i;
-                        }
-
-                        // If SHORT moved big
-                        if (maxFavorableShort > targetThresh && maxAdverseShort < slThresh) {
-                            strategist.learn(snaps, { type: 'SHORT', pnl: maxFavorableShort, maxFavorable: maxFavorableShort, maxAdverse: maxAdverseShort });
-                            lastDiscoveryIdx = i;
-                        } else if (maxAdverseShort > targetThresh / 2 && maxFavorableShort < targetThresh / 4) {
-                            strategist.learn(snaps, { type: 'SHORT', pnl: -1, maxFavorable: maxFavorableShort, maxAdverse: maxAdverseShort });
-                            lastDiscoveryIdx = i;
-                        }
-                    }
-                } else {
-                    // LIVE BACKTEST MODE: Let the AI decide and set its own SL/Target
-                    const signal = TradingStrategy.checkAiSignal(allCandles, i, opts.indexType || 'NIFTY', strategist, tradesToday, currentPlan || undefined);
-
-                    if (signal.type !== 'NONE') {
-                        activePos = {
-                            type: signal.type === 'BUY' ? 'LONG' : 'SHORT',
-                            entryPrice: currentCandle.close,
-                            entryIdx: i,
-                            entryTimeStr: timeStr,
-                            signal: signal.reason,
-                            slPoints: signal.slPoints || 30,
-                            targetPoints: signal.targetPoints || 50,
-                            snapshot: signal.snapshot,
-                            mlConfidence: signal.strength
-                        };
-                        tradesToday++;
-                    }
+                if (signal.type !== 'NONE') {
+                    activePos = {
+                        type: signal.type === 'BUY' ? 'LONG' : 'SHORT',
+                        entryPrice: currentCandle.close,
+                        entryIdx: i,
+                        entryTimeStr: timeStr,
+                        signal: signal.reason,
+                        slPoints: signal.slPoints || 30,
+                        targetPoints: signal.targetPoints || 50,
+                        snapshot: signal.snapshot as any, // Cast legacy type if needed
+                        mlConfidence: signal.strength
+                    };
+                    tradesToday++;
                 }
             }
         }
@@ -441,8 +396,6 @@ export async function runBacktest(
         consecutiveLosses: maxConsec,
         allCandles: allCandles as Candle[],
         signalCandles,
-        trainedModelJSON: strategist.exportJSON(), // Save the brain!
-        trainingLogs: strategist.getLogs()
     };
 }
 

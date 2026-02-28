@@ -1,12 +1,20 @@
 import { AlgoSignal, TradingPlan } from './types';
 import { CandleWithAdr } from './adrIndicator';
-import { MarketSnapshot, AlphaStrategist } from './ml';
 
-/**
- * AI-Driven Alpha Strategist
- */
+export interface MarketSnapshot {
+    orbHigh: number;
+    orbLow: number;
+    vwap: number;
+    atr: number;
+    timeOfDay: number;
+}
 export class TradingStrategy {
     // ... rest follows
+
+    static dateStrToNumber(dateObj: Date): number {
+        const d = dateObj.toISOString().split('T')[0];
+        return parseInt(d.replace(/-/g, ''), 10);
+    }
 
     /**
      * Pre-Market Analysis generator.
@@ -74,7 +82,7 @@ export class TradingStrategy {
             reasoning = `Yesterday closed negative below open. Moderate Short bias.`;
         } else {
             trend = 'NEUTRAL';
-            maxTradesAllowed = 2;
+            maxTradesAllowed = 2; // Strict limit to prevent drawdown in sideways markets
             maxDailyLossPoints = 80;
             reasoning = `Yesterday closed around the open. Market is consolidating. Restricted to high-confidence scalps.`;
         }
@@ -91,228 +99,182 @@ export class TradingStrategy {
     }
 
     /**
-     * Builds a normalized MarketSnapshot for the AI
-     * Now purely based on Sentiment, Trend & EMAs (ADR disabled)
+     * Extracts purely mathematical features for the Algo Engine.
      */
-    static buildSnapshot(allCandles: CandleWithAdr[], currentIdx: number, indexType: 'NIFTY' | 'BANKNIFTY', tradesTaken: number = 0): MarketSnapshot | null {
-        const currentCandle = allCandles[currentIdx];
-        if (!currentCandle) return null;
+    static buildFeatures(allCandles: CandleWithAdr[], currentIdx: number): MarketSnapshot | null {
+        if (currentIdx < 20) return null;
+        const current = allCandles[currentIdx];
 
-        // Essential EMA data
-        const ema20 = currentCandle.ema20 || currentCandle.close;
-        const ema50 = currentCandle.ema50 || currentCandle.close;
-        const ema200 = currentCandle.ema200 || currentCandle.close;
-
-        const timeObj = new Date(currentCandle.time * 1000 + 330 * 60000);
-        const morning = 9 * 60 + 15;
+        const timeObj = new Date(current.time * 1000 + 330 * 60000);
+        const morningMinutes = 9 * 60 + 15;
         const totalMins = timeObj.getUTCHours() * 60 + timeObj.getUTCMinutes();
-        const timeProgress = (totalMins - morning) / (6 * 60 + 15);
+        const timeOfDay = Math.max(0, Math.min(1, (totalMins - morningMinutes) / (6 * 60 + 15)));
 
-        const range = currentCandle.high - currentCandle.low || 1;
-        const bodySize = Math.abs(currentCandle.close - currentCandle.open);
-        const pc = currentCandle.prevClose || currentCandle.open;
-        const prevDayCloseRel = (currentCandle.close - pc) / pc;
+        const currDate = this.dateStrToNumber(new Date(current.time * 1000 + 330 * 60000));
 
-        // ── 1. Closing Structure & Gap Analysis (V4) ───────────────────────
-        const gapSize = (currentCandle.open - pc) / pc;
-        let gapType = 0; // 0: Neutral, 1: Trap (Reverse), -1: Pro (Continuation)
+        let orbHigh = -Infinity;
+        let orbLow = Infinity;
+        let vwapNumerator = 0;
+        let vwapDenominator = 0;
 
-        let closingStructure = 0;
-        let yHigh = currentCandle.high;
-        let yLow = currentCandle.low;
-        const currDate = new Date(currentCandle.time * 1000).getUTCDate();
-        let yesterdayEndIdx = -1;
-        for (let i = currentIdx - 1; i >= 0; i--) {
-            if (new Date(allCandles[i].time * 1000).getUTCDate() !== currDate) {
-                yesterdayEndIdx = i;
-                break;
+        // Find ORB (first 30-45 mins of the day) and daily VWAP
+        for (let j = currentIdx; j >= 0; j--) {
+            const lookbackCandle = allCandles[j];
+            const lbDateObj = new Date(lookbackCandle.time * 1000 + 330 * 60000);
+            const lbDate = this.dateStrToNumber(lbDateObj);
+            const lbTimeMins = lbDateObj.getUTCHours() * 60 + lbDateObj.getUTCMinutes();
+
+            if (lbDate !== currDate) break; // Reached yesterday
+
+            // VWAP Calc
+            const typicalPrice = (lookbackCandle.high + lookbackCandle.low + lookbackCandle.close) / 3;
+            vwapNumerator += typicalPrice * (lookbackCandle.volume || 1);
+            vwapDenominator += (lookbackCandle.volume || 1);
+
+            // True ORB is 9:15 to 10:00 (first 45 mins)
+            if (lbTimeMins <= (9 * 60 + 55)) {
+                if (lookbackCandle.high > orbHigh) orbHigh = lookbackCandle.high;
+                if (lookbackCandle.low < orbLow) orbLow = lookbackCandle.low;
             }
         }
 
-        if (yesterdayEndIdx !== -1) {
-            // Find yesterday's high/low for trap detection
-            let searchIdx = yesterdayEndIdx;
-            const targetDate = new Date(allCandles[searchIdx].time * 1000).getUTCDate();
-            let yMax = -Infinity;
-            let yMin = Infinity;
-            while (searchIdx >= 0 && new Date(allCandles[searchIdx].time * 1000).getUTCDate() === targetDate) {
-                if (allCandles[searchIdx].high > yMax) yMax = allCandles[searchIdx].high;
-                if (allCandles[searchIdx].low < yMin) yMin = allCandles[searchIdx].low;
-                searchIdx--;
-            }
-            yHigh = yMax;
-            yLow = yMin;
+        const vwap = vwapDenominator > 0 ? vwapNumerator / vwapDenominator : current.close;
 
-            if (yesterdayEndIdx > 30) {
-                const yesterdayFinalRange = allCandles.slice(yesterdayEndIdx - 30, yesterdayEndIdx);
-                const yOpen = yesterdayFinalRange[0].open;
-                const yClose = yesterdayFinalRange[yesterdayFinalRange.length - 1].close;
-                closingStructure = (yClose - yOpen) / yOpen;
-            }
+        // Calculate Average True Range (ATR) over 14 periods for dynamic SL/TP
+        let trueRangeSum = 0;
+        for (let j = 0; j < 14; j++) {
+            const c = allCandles[currentIdx - j];
+            const p = allCandles[currentIdx - j - 1];
+            if (!c || !p) continue;
+            const tr1 = c.high - c.low;
+            const tr2 = Math.abs(c.high - p.close);
+            const tr3 = Math.abs(c.low - p.close);
+            trueRangeSum += Math.max(tr1, tr2, tr3);
         }
+        const atr = trueRangeSum / 14;
 
-        if (gapSize > 0.002 && closingStructure < -0.001) gapType = 1;
-        else if (gapSize < -0.002 && closingStructure > 0.001) gapType = 1;
-        else if (Math.abs(gapSize) > 0.003) gapType = -1;
-
-        const prevDayHighRel = (currentCandle.close - yHigh) / yHigh;
-        const prevDayLowRel = (currentCandle.close - yLow) / yLow;
-
-        // ── 2. Structural Patterns ────────────────────────────────────────
-        let isLiquidityGrab = 0;
-        if (currentCandle.high >= pc && currentCandle.close < pc && gapSize < 0) isLiquidityGrab = 1;
-        if (currentCandle.low <= pc && currentCandle.close > pc && gapSize > 0) isLiquidityGrab = 1;
-
-        let swingLowDef = 0;
-        if (currentIdx > 15) {
-            const last15 = allCandles.slice(currentIdx - 15, currentIdx);
-            const minLowLast15 = Math.min(...last15.map(c => c.low));
-            if (currentCandle.low < minLowLast15) swingLowDef = 1;
-        }
-
-        let rangeStatus = 0;
-        if (currentIdx > 30) {
-            const last30 = allCandles.slice(currentIdx - 30, currentIdx);
-            const h = Math.max(...last30.map(c => c.high));
-            const l = Math.min(...last30.map(c => c.low));
-            const spread = (h - l) / currentCandle.close;
-            rangeStatus = Math.max(0, 1 - (spread / 0.005));
-        }
-
-        let rangeBreakout = 0;
-        let isFakeBreakout = 0;
-        if (currentIdx > 30) {
-            const rangeWindow = allCandles.slice(currentIdx - 30, currentIdx);
-            const h30 = Math.max(...rangeWindow.map(c => c.high));
-            const l30 = Math.min(...rangeWindow.map(c => c.low));
-
-            if (currentCandle.close > h30) rangeBreakout = 1;
-            else if (currentCandle.close < l30) rangeBreakout = -1;
-
-            if (currentIdx > 0) {
-                const prev = allCandles[currentIdx - 1];
-                if ((prev.close > h30 && currentCandle.close <= h30) || (prev.close < l30 && currentCandle.close >= l30)) {
-                    isFakeBreakout = 1;
-                }
-            }
-        }
-
-        // ── 3. Morning Bias & Volatility ─────────────────────────────────
-        let morningSentiment = 0;
-        let dayOpen = currentCandle.open;
-        for (let i = currentIdx; i >= Math.max(0, currentIdx - 400); i--) {
-            if (new Date(allCandles[i].time * 1000).getUTCDate() !== currDate) {
-                dayOpen = allCandles[i + 1].open;
-                break;
-            }
-            if (i === 0) dayOpen = allCandles[0].open;
-        }
-        if (dayOpen > 0) morningSentiment = (currentCandle.close - dayOpen) / (dayOpen * 0.003);
-
-        const momentum = (currentCandle.close - currentCandle.open) / (currentCandle.open || 1);
-        const sentiment = Math.max(-1, Math.min(1, momentum * 1000));
-        const volatility = range / (currentCandle.open * 0.002);
-
-        let avgSessionVol = 0;
-        if (totalMins < morning + 15) avgSessionVol = volatility;
-
-        const stopHuntZone = (Math.abs(currentCandle.close - pc) / pc < 0.0005) ? 1 : 0;
-        const orderFlowBias = sentiment * ((currentCandle.volume || 0) / (currentCandle.avgVol || 1));
-
-        // Trend Assessment Logic
-        let trendStrength = 0.5;
-        if (ema20 > ema50 && ema50 > ema200) trendStrength = 1.0;
-        else if (ema20 > ema50) trendStrength = 0.75;
-        else if (ema20 < ema50 && ema50 < ema200) trendStrength = 0.0;
-        else if (ema20 < ema50) trendStrength = 0.25;
+        if (orbHigh === -Infinity) orbHigh = current.high;
+        if (orbLow === Infinity) orbLow = current.low;
 
         return {
-            marketSentiment: sentiment,
-            trendStrength,
-            volatility: Math.min(1, volatility),
-            prevDayCloseRel,
-            prevDayHighRel,
-            prevDayLowRel,
-            gapType,
-            gapSize,
-            priceRelToClose: (currentCandle.close - pc) / pc,
-            isLiquidityGrab,
-            closingStructure,
-            rangeBreakout,
-            tradesTakenToday: tradesTaken === 0 ? 0 : (tradesTaken === 1 ? 0.5 : 1.0),
-            morningSentiment: Math.max(-1.5, Math.min(1.5, morningSentiment)),
-            isFakeBreakout,
-            stopHuntZone,
-            ema20Spread: (currentCandle.close - ema20) / currentCandle.close,
-            ema50Spread: (currentCandle.close - ema50) / currentCandle.close,
-            ema200Spread: (currentCandle.close - ema200) / currentCandle.close,
-            emaTrend: ema20 > ema50 ? 1 : 0,
-            bodyPct: bodySize / range,
-            wickRatio: (range - bodySize) / range,
-            volumeZ: (currentCandle.volume || 0) / (currentCandle.avgVol || 1),
-            timeOfDay: Math.min(1, Math.max(0, timeProgress)),
-            indexType: indexType === 'BANKNIFTY' ? 1 : 0,
-            priceRelToOpen: (currentCandle.close - (currentCandle.open || 0)) / 1000 + 0.5,
-            momentum,
-            swingLowDef,
-            rangeStatus: Math.min(1, rangeStatus),
-            avgSessionVol,
-            orderFlowBias,
-            riskRewardRatio: 3.0
+            orbHigh,
+            orbLow,
+            vwap,
+            atr,
+            timeOfDay
         };
     }
 
     /**
-     * Builds a sequence of snapshots for the AI context
-     */
-    static buildSnapshotWindow(allCandles: CandleWithAdr[], currentIdx: number, windowSize: number, indexType: 'NIFTY' | 'BANKNIFTY', tradesTaken: number = 0): MarketSnapshot[] {
-        const window: MarketSnapshot[] = [];
-        for (let i = Math.max(0, currentIdx - windowSize + 1); i <= currentIdx; i++) {
-            const snap = this.buildSnapshot(allCandles, i, indexType, tradesTaken);
-            if (snap) window.push(snap);
-        }
-        return window;
-    }
-
-    /**
-     * Checks the 1-minute candle sequence against ADR lines 
-     * and the active trading plan to generate exact signals.
+     * Executes the Core Algorithmic Quantitative Strategy.
      */
     static checkAiSignal(
         allCandles: CandleWithAdr[],
         currentIdx: number,
         indexType: 'NIFTY' | 'BANKNIFTY',
-        strategist: AlphaStrategist,
         tradesTaken: number = 0,
         plan?: TradingPlan
     ): AlgoSignal {
-        const currentCandle = allCandles[currentIdx];
-        const snaps = this.buildSnapshotWindow(allCandles, currentIdx, 3, indexType, tradesTaken);
-        if (snaps.length === 0) return { type: 'NONE', price: 0, symbol: '', reason: 'No data', strength: 0, timestamp: Date.now() };
+        const noSignal = (reason: string): AlgoSignal => ({
+            type: 'NONE', price: 0, symbol: '', reason, strength: 0, timestamp: Date.now()
+        });
 
-        const decision = strategist.decide(snaps);
+        const current = allCandles[currentIdx];
+        const prev = allCandles[currentIdx - 1];
+        if (!prev) return noSignal('Warming Up');
 
-        if (decision.type === 'WAIT') {
-            return { type: 'NONE', price: 0, symbol: '', reason: 'AI Neutral', strength: 0, timestamp: Date.now() };
+        const features = this.buildFeatures(allCandles, currentIdx);
+        if (!features) return noSignal('Warming Up');
+
+        const timeObj = new Date(current.time * 1000 + 330 * 60000);
+        const currentMins = timeObj.getUTCHours() * 60 + timeObj.getUTCMinutes();
+
+        // Wait till 10:00 AM so Opening Range properly forms
+        if (currentMins < 10 * 60) return noSignal('Building Opening Range Base');
+
+        let algoDecision: 'NONE' | 'LONG' | 'SHORT' = 'NONE';
+        let slPoints = 0;
+        let reasoning = '';
+
+        const orbBreakoutMargin = indexType === 'BANKNIFTY' ? 10 : 5;
+
+        // SETUPS
+
+        // 1. Opening Range Breakout (ORB) LONG
+        if (current.close > (features.orbHigh + orbBreakoutMargin) && prev.close <= features.orbHigh) {
+            // Must have broken out on decent volume confirming momentum
+            if ((current.volume || 1) > (current.avgVol || 1)) {
+                // Strong bullish confirmation candle closing near high
+                if (current.close > current.open && ((current.high - current.close) / (current.high - current.low + 0.001) < 0.3)) {
+                    algoDecision = 'LONG';
+                    // SL safely tucked back inside the ORB or a tight technical low constraint
+                    slPoints = Math.max(features.atr * 1.2, current.close - current.low + 10);
+                    reasoning = 'Bullish ORB Breakout (High Vol)';
+                }
+            }
         }
 
-        const signalType = decision.type === 'LONG' ? 'BUY' : 'SELL';
+        // 2. Opening Range Breakdown (ORB) SHORT
+        if (current.close < (features.orbLow - orbBreakoutMargin) && prev.close >= features.orbLow) {
+            if ((current.volume || 1) > (current.avgVol || 1)) {
+                if (current.close < current.open && ((current.close - current.low) / (current.high - current.low + 0.001) < 0.3)) {
+                    algoDecision = 'SHORT';
+                    slPoints = Math.max(features.atr * 1.2, current.high - current.close + 10);
+                    reasoning = 'Bearish ORB Breakout (High Vol)';
+                }
+            }
+        }
 
-        // Filter by Trading Plan Bias if provided
+        // 3. VWAP Bounce LONG (If we are trending above ORB, and we dip back down to VWAP)
+        if (algoDecision === 'NONE' && current.close > features.orbHigh) {
+            if (current.low <= features.vwap && current.close > features.vwap) {
+                // Green rejection candle off VWAP
+                if (current.close > current.open) {
+                    algoDecision = 'LONG';
+                    slPoints = features.atr * 1.2;
+                    reasoning = 'Bullish VWAP Trailing Rejection';
+                }
+            }
+        }
+
+        // 4. VWAP Rejection SHORT (If we are trending below ORB, and we pop up to VWAP)
+        if (algoDecision === 'NONE' && current.close < features.orbLow) {
+            if (current.high >= features.vwap && current.close < features.vwap) {
+                if (current.close < current.open) {
+                    algoDecision = 'SHORT';
+                    slPoints = features.atr * 1.2;
+                    reasoning = 'Bearish VWAP Trailing Rejection';
+                }
+            }
+        }
+
+        if (algoDecision === 'NONE') return noSignal('No Mathematical Setup');
+
+        const signalType = algoDecision === 'LONG' ? 'BUY' : 'SELL';
+
         if (plan && !plan.allowedDirections.includes(signalType)) {
-            return { type: 'NONE', price: 0, symbol: '', reason: `Bias Filter: ${signalType} restricted`, strength: 0, timestamp: Date.now() };
+            return noSignal(`Bias Filter: ${signalType} restricted`);
         }
+
+        // Cap Risk Limits Mathematically (5M candle ATR ensures we're scaled correctly to market flow)
+        if (indexType === 'BANKNIFTY') {
+            slPoints = Math.max(60, Math.min(125, slPoints));
+        } else {
+            slPoints = Math.max(20, Math.min(50, slPoints));
+        }
+
+        // We ride the trend on 5M, aiming for a 1:2.5 risk to reward
+        const tpPoints = slPoints * 2.5;
 
         return {
-            type: decision.type === 'LONG' ? 'BUY' : 'SELL',
-            price: currentCandle.close,
+            type: signalType,
+            price: current.close,
             symbol: indexType,
-            reason: decision.reasoning || `AI Alpha Pattern (confidence ${(decision.confidence * 100).toFixed(1)}%)`,
-            strength: decision.confidence,
+            reason: reasoning,
+            strength: 0.9, // Hard math setup
             timestamp: Date.now(),
-            slPoints: decision.slPoints,
-            targetPoints: decision.tpPoints,
-            snapshot: snaps[snaps.length - 1] // Pass latest snapshot for training feedback
+            slPoints,
+            targetPoints: tpPoints
         };
     }
 
