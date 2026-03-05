@@ -7,6 +7,7 @@
 import { calculateADRx2, CandleWithAdr } from './adrIndicator';
 import { TradingStrategy, MarketSnapshot } from './strategy';
 import { TradingPlan } from './types';
+import { aiEngine, MLTrainingData } from './aiEngine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -106,7 +107,9 @@ export async function runBacktest(
         trainDays?: number,
         preTrainedModel?: string,
         indexType?: 'NIFTY' | 'BANKNIFTY',
-        onProgress?: (stage: 'RUNNING' | 'TRAINING', p: number) => void
+        isTraining?: boolean,
+        onProgress?: (stage: 'RUNNING' | 'TRAINING', p: number) => void,
+        onTrainingDataExtracted?: (trainingData: MLTrainingData[]) => void
     }
 ): Promise<BacktestResult> {
     if (allBaseCandles.length === 0) {
@@ -376,6 +379,35 @@ export async function runBacktest(
         else curConsec = 0;
     });
 
+    let trainingLogs: string[] = [];
+    if (opts.isTraining) {
+        if (opts.onProgress) opts.onProgress('TRAINING', 0);
+        const trainingData: MLTrainingData[] = realTrades
+            .filter(t => t.snapshot?.mlFeatures)
+            .map(t => ({
+                input: t.snapshot!.mlFeatures!,
+                output: { success: t.netPnl > 0 ? 1 : 0 },
+                meta: { timestamp: t.entryTimestamp }
+            }));
+
+        if (trainingData.length > 0) {
+            if (opts.onTrainingDataExtracted) {
+                // Return data to UI for Human-In-The-Loop review queue
+                opts.onTrainingDataExtracted(trainingData);
+                trainingLogs.push(`Extracted ${trainingData.length} potential setups for Interactive Review Queue.`);
+            } else {
+                // Original automatic immediate training
+                const stats = aiEngine.trainModel(trainingData);
+                trainingLogs.push(`Trained AI Engine on ${trainingData.length} trade samples.`);
+                if (stats && stats.error !== undefined) {
+                    trainingLogs.push(`Final Neural Net Error: ${stats.error}`);
+                    trainingLogs.push(`Epochs (Iterations): ${stats.iterations}`);
+                }
+            }
+        }
+        if (opts.onProgress) opts.onProgress('TRAINING', 100);
+    }
+
     return {
         trades: realTrades,
         dayResults,
@@ -396,6 +428,7 @@ export async function runBacktest(
         consecutiveLosses: maxConsec,
         allCandles: allCandles as Candle[],
         signalCandles,
+        trainingLogs,
     };
 }
 

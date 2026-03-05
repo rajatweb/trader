@@ -5,11 +5,12 @@ import {
     ArrowLeft, Play, RefreshCw, TrendingUp, TrendingDown,
     BarChart3, Target, ShieldAlert, Calendar as CalendarIcon, Activity,
     ChevronDown, ChevronUp, Download, AlertCircle, Zap,
-    CheckCircle2, XCircle, Clock, Layers, Database
+    CheckCircle2, XCircle, Clock, Layers, Database, Brain
 } from 'lucide-react';
 import Link from 'next/link';
 import { useTradingStore } from '@/lib/store/tradingStore';
 import { runBacktest, BacktestResult, BacktestTrade } from '@/lib/algo/backtester';
+import { aiEngine, MLTrainingData } from '@/lib/algo/aiEngine';
 import AlgoRealtimeChart from '../algo/components/AlgoRealtimeChart';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -74,10 +75,17 @@ export default function BacktestPage() {
         to: today
     });
 
-    const [status, setStatus] = useState<'idle' | 'fetching' | 'running' | 'done' | 'error'>('idle');
+    const [status, setStatus] = useState<'idle' | 'fetching' | 'running' | 'reviewing' | 'done' | 'error'>('idle');
     const [progress, setProgress] = useState(0);
     const [errorMsg, setErrorMsg] = useState('');
     const [isCached, setIsCached] = useState(false);
+    const [isTraining, setIsTraining] = useState(false);
+
+    // AI Interactive Review Queue State
+    const [trainingQueue, setTrainingQueue] = useState<MLTrainingData[]>([]);
+    const [approvedQueue, setApprovedQueue] = useState<MLTrainingData[]>([]);
+    const [isReviewing, setIsReviewing] = useState(false);
+    const [activeReviewIdx, setActiveReviewIdx] = useState(0);
 
     const [candles, setCandles] = useState<any[]>([]);
     const [result, setResult] = useState<BacktestResult | null>(null);
@@ -86,7 +94,7 @@ export default function BacktestPage() {
     const [expandTrades, setExpandTrades] = useState(false);
     const [instrument, setInstrument] = useState<'25' | '13'>('25'); // 25 = BANKNIFTY, 13 = NIFTY
 
-    const executeSequence = async () => {
+    const executeSequence = async (train = false) => {
         if (!dateRange?.from || !dateRange?.to) return;
         if (!brokerCredentials || !brokerCredentials.clientId || !brokerCredentials.accessToken) {
             setErrorMsg('Dhan Credentials Missing! Go to Algo page and connect your broker first.');
@@ -97,6 +105,7 @@ export default function BacktestPage() {
         setStatus('fetching');
         setProgress(0);
         setIsCached(false);
+        setIsTraining(train);
         setResult(null);
         setActiveDay(null);
         setActiveMonth(null);
@@ -177,17 +186,81 @@ export default function BacktestPage() {
 
             const bt = await runBacktest(deduped, {
                 qty: instrument === '25' ? 15 : 25,
-                indexType: instrument === '25' ? 'BANKNIFTY' : 'NIFTY'
+                indexType: instrument === '25' ? 'BANKNIFTY' : 'NIFTY',
+                isTraining: train,
+                onTrainingDataExtracted: train ? (queue) => {
+                    setTrainingQueue(queue);
+                    setApprovedQueue([]);
+                    setIsReviewing(true);
+                    setActiveReviewIdx(0);
+                    setStatus('reviewing' as any);
+                } : undefined
             });
 
-            setResult(bt);
-            setProgress(100);
-            setStatus('done');
+            if (!train) {
+                setResult(bt);
+                setProgress(100);
+                setStatus('done');
+            } else if (bt.trainingLogs && bt.trainingLogs.length > 0 && !isReviewing) {
+                setResult(bt);
+                setProgress(100);
+                setStatus('done');
+            }
 
         } catch (e: any) {
             setErrorMsg(e.message || 'Backtest Failed');
             setStatus('error');
         }
+    };
+
+    const handleApproveSetup = () => {
+        if (activeReviewIdx < trainingQueue.length) {
+            setApprovedQueue(prev => [...prev, trainingQueue[activeReviewIdx]]);
+            if (activeReviewIdx < trainingQueue.length - 1) {
+                setActiveReviewIdx(prev => prev + 1);
+            } else {
+                finalizeTraining();
+            }
+        }
+    };
+
+    const handleRejectSetup = () => {
+        if (activeReviewIdx < trainingQueue.length - 1) {
+            setActiveReviewIdx(prev => prev + 1);
+        } else {
+            finalizeTraining();
+        }
+    };
+
+    const finalizeTraining = async () => {
+        setStatus('running');
+        setProgress(95);
+        if (approvedQueue.length > 0) {
+            const stats = aiEngine.trainModel(approvedQueue);
+            console.log("Trained on approved queue:", stats);
+
+            const weights = aiEngine.exportWeights();
+            if (weights) {
+                try {
+                    await fetch('/api/save-model', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model: weights })
+                    });
+                    console.log('AI weights saved automatically to /public.');
+                } catch (e) {
+                    console.error('Failed to auto-save weights', e);
+                }
+            }
+        }
+
+        if (result) {
+            const newLogs = [...(result.trainingLogs || []), `Human-in-the-loop: Approved ${approvedQueue.length} out of ${trainingQueue.length} setups.`];
+            setResult({ ...result, trainingLogs: newLogs });
+        }
+
+        setStatus('done');
+        setProgress(100);
     };
 
     const activeTrades = result?.trades.filter(t => {
@@ -259,10 +332,17 @@ export default function BacktestPage() {
                         </PopoverContent>
                     </Popover>
 
-
+                    <button
+                        onClick={() => executeSequence(true)}
+                        disabled={status !== 'idle' && status !== 'done' && status !== 'error'}
+                        className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-500/20 transition-all shadow-[0_0_15px_rgba(245,158,11,0.1)] disabled:opacity-50"
+                    >
+                        <Brain size={14} fill="currentColor" />
+                        Train Model
+                    </button>
 
                     <button
-                        onClick={() => executeSequence()}
+                        onClick={() => executeSequence(false)}
                         disabled={status !== 'idle' && status !== 'done' && status !== 'error'}
                         className="flex items-center gap-2 px-6 py-2.5 bg-violet-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-violet-500 transition-all shadow-lg shadow-violet-600/20 disabled:opacity-50"
                     >
@@ -300,11 +380,11 @@ export default function BacktestPage() {
                         <div className="text-center">
                             <div className="text-white font-bold text-lg">
                                 {status === 'fetching' && (isCached ? `Pulling from Redis Cache… ${progress}%` : `Fetching Data… ${progress}%`)}
-                                {status === 'running' && `Executing Quantitative Engine…`}
+                                {status === 'running' && (isTraining ? `Training Neural Network Model…` : `Executing Quantitative Engine…`)}
                             </div>
                             <p className="text-slate-500 text-xs mt-1 max-w-sm mx-auto">
                                 {status === 'fetching' && (isCached ? `Lightning fast retrieval from local Upstash Redis instance.` : `Downloading 5-min ${instrument === '25' ? 'BANKNIFTY' : 'NIFTY'} candles from Dhan API`)}
-                                {status === 'running' && `Scanning for high-alpha ADR & EMA setups in historical data`}
+                                {status === 'running' && (isTraining ? `Using fetched historical data as supervised AI learning material.` : `Scanning for high-alpha ADR & EMA setups in historical data`)}
                             </p>
                         </div>
                         <div className="w-64 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
@@ -322,6 +402,86 @@ export default function BacktestPage() {
                             <div className="text-rose-400/70 text-xs mt-0.5">{errorMsg}</div>
                         </div>
                         <button onClick={() => executeSequence()} className="ml-auto text-xs text-rose-400 hover:text-white transition-colors">Retry →</button>
+                    </div>
+                )}
+
+                {status === 'reviewing' && trainingQueue.length > 0 && (
+                    <div className="flex flex-col items-center justify-center h-full max-w-3xl mx-auto w-full gap-6">
+                        <div className="flex items-center gap-4 mb-4">
+                            <Brain size={40} className="text-amber-400" />
+                            <div>
+                                <h1 className="text-2xl font-black text-white">Interactive Review Queue</h1>
+                                <p className="text-slate-400 text-sm">Validating Setup {activeReviewIdx + 1} of {trainingQueue.length}</p>
+                            </div>
+                        </div>
+
+                        {/* Setup Inspection Card */}
+                        <div className="w-full bg-[#0a0c10] border border-white/10 rounded-3xl p-6 shadow-2xl">
+                            <div className="flex justify-between items-center mb-6">
+                                <div className="flex items-center gap-3">
+                                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${trainingQueue[activeReviewIdx].output.success === 1 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`}>
+                                        {trainingQueue[activeReviewIdx].output.success === 1 ? 'Winning Trade' : 'Losing Trade'}
+                                    </span>
+                                </div>
+                                <span className="text-xs font-bold text-slate-500 bg-white/5 px-3 py-1 rounded-full">
+                                    {instrument === '25' ? 'BANKNIFTY' : 'NIFTY'}
+                                </span>
+                            </div>
+
+                            {/* Chart Context View */}
+                            {result && result.allCandles && trainingQueue[activeReviewIdx] && trainingQueue[activeReviewIdx].meta && (
+                                <div className="w-full h-48 mb-6 rounded-2xl overflow-hidden border border-white/5 relative">
+                                    <AlgoRealtimeChart
+                                        data={result.allCandles}
+                                        symbol={instrument === '25' ? 'BANKNIFTY' : 'NIFTY'}
+                                        trades={result.trades.filter(t => t.entryTimestamp === trainingQueue[activeReviewIdx].meta?.timestamp)}
+                                        focusIndex={
+                                            result.allCandles.findIndex(
+                                                (c: any) => c.time === trainingQueue[activeReviewIdx].meta?.timestamp
+                                            )
+                                        }
+                                    />
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-4 mb-8">
+                                <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/5">
+                                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Vol Spike</div>
+                                    <div className="text-lg font-black text-white">{trainingQueue[activeReviewIdx].input.volumeSpike.toFixed(2)}x</div>
+                                </div>
+                                <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/5">
+                                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Time (0-1)</div>
+                                    <div className="text-lg font-black text-white">{trainingQueue[activeReviewIdx].input.timeOfDay.toFixed(2)}</div>
+                                </div>
+                                <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/5">
+                                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Lower Wick Ratio</div>
+                                    <div className="text-lg font-black text-white">{(trainingQueue[activeReviewIdx].input.lowerWickRatio * 100).toFixed(0)}%</div>
+                                </div>
+                                <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/5">
+                                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Sweep Low Dist</div>
+                                    <div className="text-lg font-black text-white">{(trainingQueue[activeReviewIdx].input.sweepLowDist).toFixed(4)}</div>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleRejectSetup}
+                                    className="flex-1 py-4 bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-500/50 text-white rounded-2xl font-bold uppercase tracking-widest transition-all flex justify-center items-center gap-2"
+                                >
+                                    <XCircle size={18} /> Noise (Reject)
+                                </button>
+                                <button
+                                    onClick={handleApproveSetup}
+                                    className="flex-1 py-4 bg-violet-600 hover:bg-violet-500 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-violet-600/20 transition-all flex justify-center items-center gap-2"
+                                >
+                                    <CheckCircle2 size={18} /> Valid Setup
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-4 text-xs font-bold text-slate-500">
+                            Approved: <span className="text-emerald-400">{approvedQueue.length}</span> / {trainingQueue.length}
+                        </div>
                     </div>
                 )}
 
@@ -429,6 +589,17 @@ export default function BacktestPage() {
                                         ))}
                                     </div>
                                 </div>
+
+                                {result.trainingLogs && result.trainingLogs.length > 0 && (
+                                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+                                        <div className="text-amber-500 text-[10px] font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                            <Brain size={12} /> Neural Network Status
+                                        </div>
+                                        {result.trainingLogs.map((log, i) => (
+                                            <div key={i} className="text-amber-400/80 text-[10px] font-mono leading-tight">{log}</div>
+                                        ))}
+                                    </div>
+                                )}
 
                                 {activeMonth && (
                                     <div>

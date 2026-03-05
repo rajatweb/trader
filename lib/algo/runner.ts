@@ -5,6 +5,7 @@ import { playAlgoSound } from '../utils/sound';
 import { TradingStrategy } from './strategy';
 import { TradingPlan } from './types';
 import { calculateADRx2, CandleWithAdr } from './adrIndicator';
+import { aiEngine } from './aiEngine';
 
 export function useAlgoRunner(chartData: any[] = []) {
     const {
@@ -36,11 +37,13 @@ export function useAlgoRunner(chartData: any[] = []) {
         console.log(`[AlgoRunner] Started. Computing Pre-Market Analysis...`);
 
         // Hydrate AI Brain from saved weights
-        fetch('/ml_weights.json').then(res => res.text()).then(text => {
-            if (text && text.length > 10) {
-                console.log(`[AlgoRunner] AI Brain Hydrated with pre-trained weights.`);
-            }
-        }).catch(() => console.log(`[AlgoRunner] No pre-trained weights found. Using fresh brain.`));
+        if (!aiEngine.getHydrationStatus()) {
+            fetch('/ml_weights.json').then(res => res.json()).then(json => {
+                if (json && Object.keys(json).length > 0) {
+                    aiEngine.importWeights(json);
+                }
+            }).catch(() => console.log(`[AlgoRunner] No pre-trained weights found. Using fresh brain.`));
+        }
 
         const initialPlan = TradingStrategy.runPreMarketAnalysis(chartDataRef.current);
 

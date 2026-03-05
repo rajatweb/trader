@@ -20,12 +20,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         { name: 'Console', href: '/console' }
     ];
 
-    const isBacktestPage = pathname?.startsWith('/apps/backtest');
-    const isAlgoPage = pathname?.startsWith('/apps/algo');
+    const isBacktestPage = pathname?.includes('/backtest');
+    const isAlgoPage = pathname?.includes('/algo');
+    const isAiStudioPage = pathname?.includes('/ai-studio');
 
-    if (isBacktestPage || isAlgoPage) {
+    if (isBacktestPage || isAlgoPage || isAiStudioPage) {
         return (
-            <div className="h-screen w-screen overflow-y-auto bg-white">
+            <div className="h-screen w-screen overflow-hidden bg-[#0a0c10]">
                 {children}
             </div>
         );
