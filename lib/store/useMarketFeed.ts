@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradingStore } from './tradingStore';
+import { useAlgoStore } from './algoStore';
 import { DhanFeedClient, MarketDataUpdate } from '@/lib/dhan/websocket-client';
 
 /**
@@ -85,11 +86,39 @@ export function useMarketFeed() {
             open: update.open,
             high: update.high,
             low: update.low,
-            volume: update.volume
+            volume: update.volume,
+            ltt: update.ltt
         }));
 
         // Update watchlist and positions
         updateWatchlistPrices(priceUpdates);
+
+        // India VIX live feed: securityId 21, segment IDX_I (NSE Index)
+        const algoState = useAlgoStore.getState();
+        const vixUpdate = priceUpdates.find(u => u.securityId === '21');
+        if (vixUpdate?.ltp && vixUpdate.ltp > 0) {
+            algoState.setLiveVix(vixUpdate.ltp);
+        }
+
+        if (algoState.activePositions.length > 0) {
+            priceUpdates.forEach(update => {
+                // Find matching active position by exact ID
+                let activePos = algoState.activePositions.find(p => String((p as any).id) === update.securityId);
+
+                // If not found by exact ID, fallback precisely on exact symbol string matching
+                if (!activePos) {
+                    const watchItem = watchlist.find(w => w.securityId === update.securityId);
+                    if (watchItem) {
+                        activePos = algoState.activePositions.find(p => p.symbol === watchItem.symbol);
+                    }
+                }
+
+                if (activePos && update.ltp !== undefined && update.ltp > 0) {
+                    // Update exact match to avoid collisions
+                    algoState.updatePrices(String((activePos as any).id) || activePos.symbol, update.ltp);
+                }
+            });
+        }
 
         // Check pending orders for execution
         checkPendingOrders(updates);

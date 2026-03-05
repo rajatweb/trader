@@ -85,10 +85,11 @@ export class DhanClient {
         oi?: boolean;
         fromDate: string;
         toDate: string;
+        interval?: string;
     }): Promise<any> {
         return this.request(DHAN_ENDPOINTS.PATHS.CHARTS_HISTORICAL, {
             method: 'POST',
-            body: JSON.stringify(params)
+            body: JSON.stringify({ ...params, interval: params.interval || '1D' })
         });
     }
 
@@ -108,7 +109,7 @@ export class DhanClient {
     }
 
     public async getRollingOptionData(params: {
-        securityId: string;
+        securityId: string | number;
         exchangeSegment: string;
         instrument: string;
         expiryFlag: 'WEEK' | 'MONTH';

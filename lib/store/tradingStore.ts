@@ -20,6 +20,7 @@ export interface WatchlistItem {
     high?: number;
     low?: number;
     volume?: number;
+    ltt?: number;
     isIndex?: boolean;
 }
 

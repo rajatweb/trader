@@ -20,6 +20,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         { name: 'Console', href: '/console' }
     ];
 
+    const isBacktestPage = pathname?.includes('/backtest');
+    const isAlgoPage = pathname?.includes('/algo');
+    const isAiStudioPage = pathname?.includes('/ai-studio');
+
+    if (isBacktestPage || isAlgoPage || isAiStudioPage) {
+        return (
+            <div className="h-screen w-screen overflow-hidden bg-[#0a0c10]">
+                {children}
+            </div>
+        );
+    }
+
     return (
         <div className="flex flex-col h-screen overflow-hidden bg-[#f4f6f8] text-[#444]">
             <Navbar onToggleSidebar={() => setSidebarOpen(!isSidebarOpen)} isSidebarOpen={isSidebarOpen} />
@@ -55,8 +67,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                     href={item.href}
                                     onClick={() => setSidebarOpen(false)}
                                     className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${pathname === item.href
-                                            ? 'bg-blue-50 text-blue-600'
-                                            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                                        ? 'bg-blue-50 text-blue-600'
+                                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                                         }`}
                                 >
                                     {item.name}
