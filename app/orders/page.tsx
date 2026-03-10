@@ -34,7 +34,7 @@ export default function OrdersPage() {
         return filtered;
     };
 
-    const filteredOrders = getFilteredOrders();
+    const filteredOrders = getFilteredOrders().sort((a, b) => b.timestamp - a.timestamp);
 
     const getStatusColor = (status: string) => {
         switch (status) {

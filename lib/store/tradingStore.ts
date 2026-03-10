@@ -837,6 +837,12 @@ export const useTradingStore = create<TradingStore>()(
                 const position = get().positions.find(p => p.securityId === securityId);
                 if (!position || position.quantity === 0) return;
 
+                // Reset/Cancel all pending/open orders for this instrument
+                const pendingOrders = get().orders.filter(
+                    o => o.securityId === securityId && (o.status === 'PENDING' || o.status === 'OPEN')
+                );
+                pendingOrders.forEach(order => get().cancelOrder(order.orderId));
+
                 // For F&O, we need to send quantity in LOTS to placeOrder
                 // The store calculates actual units (qty * lotSize) during execution
                 const instrumentDetails = get().getInstrumentDetails(position.symbol, position.segment);
