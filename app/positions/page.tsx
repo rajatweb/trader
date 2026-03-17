@@ -51,7 +51,8 @@ export default function PositionsPage() {
         prefilledProductType: 'MIS' as any
     });
 
-    const totalPnL = positions.reduce((acc: number, curr: Position) => acc + curr.totalPnl, 0);
+    const activeTotalPnL = positions.filter((p: Position) => p.quantity !== 0).reduce((acc: number, curr: Position) => acc + curr.totalPnl, 0);
+    const closedTotalPnL = positions.filter((p: Position) => p.quantity === 0).reduce((acc: number, curr: Position) => acc + (curr.realizedPnl !== undefined ? curr.realizedPnl : curr.totalPnl), 0);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -309,9 +310,9 @@ export default function PositionsPage() {
                                         })}
 
                                         <tr className="bg-white">
-                                            <td colSpan={6} className="px-3 py-4 text-right font-medium text-gray-500 text-[13px]">Total P&L</td>
-                                            <td className={`px-3 py-4 text-right font-semibold text-[15px] ${totalPnL >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                                                {totalPnL >= 0 ? '+' : ''}₹{totalPnL.toFixed(2)}
+                                            <td colSpan={6} className="px-3 py-4 text-right font-medium text-gray-500 text-[13px]">Total Active P&L</td>
+                                            <td className={`px-3 py-4 text-right font-semibold text-[15px] ${activeTotalPnL >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                                                {activeTotalPnL >= 0 ? '+' : ''}₹{activeTotalPnL.toFixed(2)}
                                             </td>
                                             <td colSpan={2}></td></tr>
                                     </tbody>
@@ -365,6 +366,12 @@ export default function PositionsPage() {
                                                         </button>
                                                     </td></tr>
                                             ))}
+                                            <tr className="bg-white">
+                                                <td colSpan={6} className="px-3 py-4 text-right font-medium text-gray-500 text-[13px]">Total Closed P&L</td>
+                                                <td className={`px-3 py-4 text-right font-semibold text-[15px] ${closedTotalPnL >= 0 ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                                                    {closedTotalPnL >= 0 ? '+' : ''}₹{closedTotalPnL.toFixed(2)}
+                                                </td>
+                                                <td></td></tr>
                                         </tbody>
                                     </table>
                                 </div>
