@@ -147,7 +147,7 @@ export default function PositionsPage() {
                 ) : (
                     <>
                         {/* Positions Table */}
-                        <div className="w-full overflow-x-auto pointer-events-auto">
+                        <div className="w-full overflow-visible pointer-events-auto pb-48">
                             {/* Active Positions Section */}
                             {activePositions.length > 0 && (
                                 <table className="w-full text-left border-collapse mb-8">

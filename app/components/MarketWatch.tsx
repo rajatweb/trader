@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, MoreHorizontal, TrendingUp, TrendingDown, RefreshCcw, Trash2 } from 'lucide-react';
+import { Search, MoreHorizontal, TrendingUp, TrendingDown, RefreshCcw, Trash2, Bookmark } from 'lucide-react';
 import { Reorder } from 'framer-motion';
 import Link from 'next/link';
 import OrderModal from './OrderModal';
@@ -70,7 +70,8 @@ export default function MarketWatch() {
             ltp: 0,
             change: 0,
             changePercent: 0,
-            isIndex: instrument.segment === 'IDX_I'
+            isIndex: instrument.segment === 'IDX_I',
+            expiryFlag: instrument.expiryFlag
         };
 
         addToWatchlist(newItem);
@@ -149,26 +150,58 @@ export default function MarketWatch() {
                         {searchResults.length > 0 ? (
                             searchResults.map((item, idx) => {
                                 const isAdded = watchlist.some(w => w.securityId === String(item.securityId));
+                                
+                                // Format the symbol name to match "SENSEX 25 MAR 74400 PUT"
+                                let displayName = item.symbol || item.tradingSymbol;
+                                if (displayName) {
+                                    if (item.optionType || item.segment.includes('OP') || item.segment.includes('FNO')) {
+                                        displayName = displayName.toUpperCase().replace(/ CE$/, ' CALL').replace(/ PE$/, ' PUT');
+                                        // add space in expiry if it's like 25MAR => 25 MAR
+                                        displayName = displayName.replace(/(\d{1,2})([A-Z]{3})/, '$1 $2');
+                                    } else if (item.segment.includes('FUT')) {
+                                        displayName = displayName.toUpperCase().replace(/(\d{1,2})([A-Z]{3})/, '$1 $2');
+                                    }
+                                }
+
+                                // Badge Text: OP, FUT, or EQ
+                                let badgeText = 'EQ';
+                                if (item.segment.includes('FNO') || item.optionType || displayName.includes(' CALL') || displayName.includes(' PUT')) badgeText = 'OP';
+                                else if (item.segment.includes('FUT')) badgeText = 'FUT';
+                                else if (item.segment.includes('IDX')) badgeText = 'IDX';
+
                                 return (
                                     <div
                                         key={`${item.securityId}_${idx}`}
                                         onClick={() => !isAdded && handleAddToWatchlist(item)}
                                         className={`flex justify-between items-center px-4 py-3 border-b border-[#f3f3f3] hover:bg-[#fbfbfb] cursor-pointer transition-colors ${isAdded ? 'opacity-50 cursor-default' : ''}`}
                                     >
-                                        <div className="flex flex-col">
-                                            <span className="text-[13px] font-medium text-[#333]">{item.tradingSymbol}</span>
-                                            <div className="flex gap-2">
-                                                <span className="text-[10px] text-[#999]">{item.exchange}</span>
-                                                <span className="text-[10px] text-[#999]">{item.segment}</span>
+                                        <div className="flex items-center gap-3">
+                                            <Bookmark className="text-[#dedede] fill-[#f4f4f4]" size={16} strokeWidth={2} />
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[13px] font-medium text-[#444]">{displayName}</span>
+                                                <span className="text-[9px] text-[#999] font-medium tracking-wide mt-0.5">{item.exchange}</span>
                                             </div>
                                         </div>
-                                        {isAdded ? (
-                                            <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded">Added</span>
-                                        ) : (
-                                            <button className="text-[#4184f3] hover:bg-blue-50 p-1 rounded">
-                                                <MoreHorizontal size={16} />
-                                            </button>
-                                        )}
+                                        
+                                        <div className="flex items-center gap-2">
+                                            {isAdded ? (
+                                                <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-medium">Added</span>
+                                            ) : (
+                                                badgeText === 'OP' ? (
+                                                    <span className="text-[#d73236] text-[10px] border border-[#f5b8b9] px-1.5 py-[2px] rounded-[3px] font-medium tracking-wide leading-none bg-white">
+                                                        {badgeText}
+                                                    </span>
+                                                ) : badgeText === 'IDX' ? (
+                                                    <span className="text-[#6b21a8] text-[10px] border border-[#d8b4fe] px-1.5 py-[2px] rounded-[3px] font-medium tracking-wide leading-none bg-white">
+                                                        {badgeText}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[#666] text-[10px] border border-[#ddd] px-1.5 py-[2px] rounded-[3px] font-medium tracking-wide leading-none bg-white">
+                                                        {badgeText}
+                                                    </span>
+                                                )
+                                            )}
+                                        </div>
                                     </div>
                                 );
                             })
@@ -240,6 +273,15 @@ function WatchlistItemRow({ item, handleOpenModal }: {
                 <div className="flex items-center gap-1 text-[10px] text-[#9b9b9b]">
                     <span className="uppercase font-bold tracking-wider">{item.exchange}</span>
                     {!item.isIndex && <span className="w-1 h-1 rounded-full bg-[#ccc]"></span>}
+                    {item.expiryFlag && (
+                        <span className={`text-[8.5px] px-[3px] py-[1px] rounded-[2px] font-medium leading-none ml-0.5 ${
+                            item.expiryFlag === 'W' 
+                                ? 'bg-purple-50 text-purple-600 border border-purple-100' 
+                                : 'bg-blue-50 text-blue-600 border border-blue-100'
+                        }`}>
+                            {item.expiryFlag === 'W' ? 'W' : 'M'}
+                        </span>
+                    )}
                 </div>
             </div>
 

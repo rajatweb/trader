@@ -21,6 +21,7 @@ export interface WatchlistItem {
     low?: number;
     volume?: number;
     isIndex?: boolean;
+    expiryFlag?: string;
 }
 
 export type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M';
