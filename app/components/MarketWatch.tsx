@@ -285,29 +285,30 @@ function WatchlistItemRow({ item, handleOpenModal }: {
                 </div>
             </div>
 
-            {/* Price Info */}
-            <div className="flex gap-3 items-center">
-                <div className="flex flex-col items-end gap-0.5 w-[72px]"> {/* Fixed width for stability */}
-                    <span className={`text-[11px] font-medium tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                        {item.change > 0 ? '+' : ''}{item.change.toFixed(2)}
+            {/* Right Side Container containing Price Info and Hover Actions */}
+            <div className="relative flex items-center">
+                {/* Price Info */}
+                <div className="flex gap-3 items-center transition-opacity duration-150 group-hover:opacity-0">
+                    <div className="flex flex-col items-end gap-0.5 w-[72px]"> {/* Fixed width for stability */}
+                        <span className={`text-[11px] font-medium tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                            {item.change > 0 ? '+' : ''}{item.change.toFixed(2)}
+                        </span>
+                        <span className={`text-[10px] opacity-80 tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                            {item.changePercent.toFixed(2)}%
+                        </span>
+                    </div>
+
+                    <span className={`text-[13px] font-semibold tracking-wide w-20 text-right tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
+                        {item.ltp.toFixed(2)}
                     </span>
-                    <span className={`text-[10px] opacity-80 tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                        {item.changePercent.toFixed(2)}%
-                    </span>
+
+                    <div className="w-4 flex justify-center">
+                        {isPositive ? <TrendingUp size={12} className="text-[#26a69a]" strokeWidth={2.5} /> : <TrendingDown size={12} className="text-[#d43725]" strokeWidth={2.5} />}
+                    </div>
                 </div>
 
-                <span className={`text-[13px] font-semibold tracking-wide w-20 text-right tabular-nums ${isPositive ? 'text-[#26a69a]' : 'text-[#d43725]'}`}>
-                    {item.ltp.toFixed(2)}
-                </span>
-
-                <div className="w-4 flex justify-center">
-                    {isPositive ? <TrendingUp size={12} className="text-[#26a69a]" strokeWidth={2.5} /> : <TrendingDown size={12} className="text-[#d43725]" strokeWidth={2.5} />}
-                </div>
-            </div>
-
-            {/* Hover Actions Overlay - Absolute positioned over the whole row but only visible on hover */}
-            <div className="absolute inset-0 bg-[#fbfbfb] bg-opacity-95 flex items-center justify-end px-4 gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-10 pointer-events-none group-hover:pointer-events-auto">
-                <div className="flex gap-1 items-center">
+                {/* Hover Actions Overlay */}
+                <div className="absolute right-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-10 pointer-events-none group-hover:pointer-events-auto">
                     <button
                         onClick={(e) => { e.stopPropagation(); handleOpenModal('Buy', item); }}
                         className="bg-[#4184f3] text-white px-3 py-1.5 rounded text-[11px] font-bold hover:bg-blue-600 transition shadow-sm"
@@ -320,9 +321,6 @@ function WatchlistItemRow({ item, handleOpenModal }: {
                     >
                         S
                     </button>
-                    {/* <button className="text-[#666] p-1.5 hover:bg-gray-200 rounded transition border border-transparent hover:border-gray-300 ml-1">
-                        <MoreHorizontal size={16} />
-                    </button> */}
                     <Link
                         href={`/apps/option-chain?symbol=${item.symbol.split(' ')[0]}`}
                         className="text-[#666] p-1.5 hover:bg-gray-200 rounded transition border border-transparent hover:border-gray-300 ml-1 flex items-center justify-center font-bold text-[10px]"
