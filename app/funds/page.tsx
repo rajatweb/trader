@@ -30,12 +30,12 @@ export default function FundsPage() {
                 <h1 className="text-xl font-light text-[#444] flex items-center gap-2">
                     Funds
                 </h1>
-                <button
+                {/* <button
                     onClick={handleReset}
                     className="flex items-center gap-2 text-xs font-medium text-red-500 hover:text-red-600 transition-colors bg-white border border-red-100 px-3 py-1.5 rounded shadow-sm w-full md:w-auto justify-center"
                 >
                     <RotateCcw size={14} /> Reset Account
-                </button>
+                </button> */}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl">
